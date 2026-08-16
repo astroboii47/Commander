@@ -62,7 +62,7 @@ This project can only improve as a group effort. Testing, device reports, ideas,
 </table>
 
 <p align="center">
-  <a href="https://github.com/astroboii47/Commander/releases/download/untagged-342a3d7e3da1847d7643/commander-in-hand.mp4">
+  <a href="https://github.com/astroboii47/Commander/releases/download/v0.1.0-alpha.1/commander-in-hand.mp4">
     <img src="docs/media/commander-in-hand-poster.jpg" width="300" alt="Commander running on a physical-keyboard phone">
   </a>
   <br>
