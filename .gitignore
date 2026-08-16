@@ -24,6 +24,7 @@ keystore.properties
 *.apk
 *.aab
 captures/
+docs/media/*.mp4
 
 # Local design exploration; production app assets live under app/src/main/res.
 branding/

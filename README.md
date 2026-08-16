@@ -36,6 +36,35 @@ The renewed interest in keyboard phones gives me hope that we can have more choi
 
 This project can only improve as a group effort. Testing, device reports, ideas, fixes, and thoughtful feedback are all valuable, especially from people using hardware and workflows I do not have access to.
 
+## See Commander in action
+
+<p align="center">
+  <a href="https://github.com/astroboii47/Commander/releases/download/v0.1.0-alpha.1/commander-demo.mp4">
+    <img src="docs/media/commander-demo-poster.jpg" width="720" alt="Commander app search demonstration">
+  </a>
+  <br>
+  <sub>12-second interface demo. Select the image to watch.</sub>
+</p>
+
+<p align="center">
+  <a href="https://github.com/astroboii47/Commander/releases/download/v0.1.0-alpha.1/commander-in-hand.mp4">
+    <img src="docs/media/commander-in-hand-poster.jpg" width="300" alt="Commander running on a physical-keyboard phone">
+  </a>
+  <br>
+  <sub>Commander in hand on physical-keyboard hardware.</sub>
+</p>
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/media/app-search.png" alt="Commander app search"><br><sub>Fast app search</sub></td>
+    <td align="center"><img src="docs/media/todoist-command.png" alt="Commander Todoist command"><br><sub>Recognised Todoist dates and times</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/media/app-alias.png" alt="Commander app search alias"><br><sub>Configurable app aliases</sub></td>
+    <td align="center"><img src="docs/media/commander-hub.png" alt="Commander Hub"><br><sub>Commander Hub</sub></td>
+  </tr>
+</table>
+
 ## Tested devices
 
 Most development and testing has been done on:
