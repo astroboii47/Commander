@@ -61,6 +61,7 @@ class SettingsActivity : ComponentActivity() {
         iconPickerPackage = null
         iconPickerCallback = null
     }
+    private val contactsPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { recreate() }
     private val taskerPicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         taskerPickerCallback?.invoke(result.data)
         taskerPickerCallback = null
@@ -121,6 +122,10 @@ class SettingsActivity : ComponentActivity() {
         settingsExporter.launch("commander-settings.json")
     }
 
+    fun requestContactsAccess() {
+        contactsPermission.launch(Manifest.permission.READ_CONTACTS)
+    }
+
     fun importSettings() {
         settingsImporter.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
     }
@@ -179,6 +184,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var quickHubNavigation by remember { mutableStateOf(HubSettings.quickKeyboardNavigation.value) }
     var geminiKey by remember { mutableStateOf(GeminiSettings.apiKey(activity)) }
     var directSms by remember { mutableStateOf(SmsSettings.directEnabled(activity)) }
+    val contactsGranted = ActivityCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
     var messengerPhotos by remember { mutableStateOf(MessengerSettings.profilePhotos(activity)) }
     var aliases by remember {
         mutableStateOf(AliasSettings.targets.associate { it.id to AliasSettings.alias(activity, it) })
@@ -252,6 +258,22 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         Spacer(Modifier.height(26.dp))
         Text("messages", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Contact search", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    if (contactsGranted) "Allowed for @ messages and # calls" else "Allow names to appear in message and call search",
+                    color = Color(0xFF99958E),
+                    fontSize = 12.sp,
+                )
+            }
+            Button(
+                onClick = activity::requestContactsAccess,
+                enabled = !contactsGranted,
+                colors = ButtonDefaults.buttonColors(containerColor = accent, disabledContainerColor = Color(0xFF242424)),
+            ) { Text(if (contactsGranted) "Allowed" else "Allow", color = Color.White) }
+        }
+        Spacer(Modifier.height(20.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text("Send SMS directly", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)

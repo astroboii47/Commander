@@ -205,6 +205,7 @@ fun CommandOverlayApp(
     var aliasIcon by remember { mutableStateOf<Drawable?>(null) }
     var shortcutResults by remember { mutableStateOf<List<AppShortcutResult>>(emptyList()) }
     val hasFileAccess = engine.hasFileSearchAccess()
+    val hasContactsPermission = engine.hasContactsPermission()
     val contactQuery = if (selectedContact == null) parsed.text else ""
     val contacts = remember(activeKind, contactQuery, maxVisibleResults) {
         if ((activeKind == CommandKind.Message || activeKind == CommandKind.Call) && selectedContact == null) {
@@ -217,8 +218,8 @@ fun CommandOverlayApp(
         else -> when (activeKind) {
         CommandKind.Apps -> if (aliasMatch != null) aliasMatch.query.isNotBlank() else apps.isNotEmpty()
         CommandKind.Files -> !hasFileAccess || files.isNotEmpty()
-        CommandKind.Message -> if (selectedContact != null) query.isNotBlank() else contacts.isNotEmpty()
-        CommandKind.Call -> selectedContact != null || contacts.isNotEmpty()
+        CommandKind.Message -> if (!hasContactsPermission) true else if (selectedContact != null) query.isNotBlank() else contacts.isNotEmpty()
+        CommandKind.Call -> if (!hasContactsPermission) true else selectedContact != null || contacts.isNotEmpty()
         CommandKind.Ask -> if (inGeminiConversation) query.isNotBlank() && !askLoading
             else parsed.text.isNotBlank() && settledQuery == query
         else -> parsed.text.isNotBlank()
@@ -408,6 +409,10 @@ fun CommandOverlayApp(
                 executing = false
                 playOutcome(null)
             }
+            return
+        }
+        if ((activeKind == CommandKind.Message || activeKind == CommandKind.Call) && !engine.hasContactsPermission()) {
+            engine.requestContactsPermission()
             return
         }
         if ((activeKind == CommandKind.Message || activeKind == CommandKind.Call) && selectedContact == null) {
@@ -659,6 +664,9 @@ fun CommandOverlayApp(
                         playOutcome(error)
                         if (error != null) notice = error
                     }
+                }
+                (activeKind == CommandKind.Message || activeKind == CommandKind.Call) && !hasContactsPermission -> {
+                    OverlayContactAccess(palette) { engine.requestContactsPermission() }
                 }
                 (activeKind == CommandKind.Message || activeKind == CommandKind.Call) && query.length > 1 && selectedContact == null -> {
                     OverlayContactResults(contacts, parsed, selectedIndex, palette) { contact ->
@@ -1449,8 +1457,25 @@ private fun OverlayAliasPreview(match: AliasMatch, icon: Drawable?, palette: Ove
     ) {
         RealAppIcon(icon, match.target.label, palette, Modifier.size(40.dp))
         Column(Modifier.padding(start = 12.dp).weight(1f)) {
-            Text(match.target.label, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text("search → ${match.query}", color = palette.secondary, fontFamily = OverlayMono, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(match.previewTitle ?: match.target.label, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(match.previewSubtitle ?: "search → ${match.query}", color = palette.secondary, fontFamily = OverlayMono, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+    }
+}
+
+@Composable
+private fun OverlayContactAccess(palette: OverlayPalette, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(palette.tile)
+            .border(1.dp, OverlayAccent.copy(alpha = .7f), RoundedCornerShape(15.dp))
+            .clickable(onClick = onClick).padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("@", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text("allow contact search", color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text("needed for names, calls and messages", color = palette.secondary, fontFamily = OverlayMono, fontSize = 11.sp)
         }
         Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
     }

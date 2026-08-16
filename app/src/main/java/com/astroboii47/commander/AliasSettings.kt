@@ -9,13 +9,25 @@ data class SearchTarget(
     val urlTemplate: String,
 )
 
-data class AliasMatch(val target: SearchTarget, val alias: String, val query: String)
+data class AliasMatch(
+    val target: SearchTarget,
+    val alias: String,
+    val query: String,
+    val previewTitle: String? = null,
+    val previewSubtitle: String? = null,
+    val routeOrigin: String? = null,
+    val routeDestination: String? = null,
+    val travelMode: String? = null,
+    val isDirections: Boolean = false,
+)
 
 object AliasSettings {
     val targets = listOf(
         SearchTarget("play", "Play Store", "com.android.vending", "https://play.google.com/store/search?q=%s&c=apps"),
         SearchTarget("waze", "Waze", "com.waze", "https://www.waze.com/ul?q=%s"),
-        SearchTarget("maps", "Google Maps", "com.google.android.apps.maps", "https://maps.google.com/?q=%s"),
+        SearchTarget("maps", "Google Maps", "com.google.android.apps.maps", "https://www.google.com/maps/search/?api=1&query=%s"),
+        SearchTarget("gmail", "Gmail", "com.google.android.gm", "https://mail.google.com/mail/u/0/#search/%s"),
+        SearchTarget("onepassword", "1Password", "com.onepassword.android", ""),
         SearchTarget("youtube", "YouTube", "com.google.android.youtube", "https://www.youtube.com/results?search_query=%s"),
         SearchTarget("reddit", "Reddit", "com.reddit.frontpage", "https://www.reddit.com/search/?q=%s"),
         SearchTarget("spotify", "Spotify", "com.spotify.music", "https://open.spotify.com/search/%s"),
@@ -41,7 +53,18 @@ object AliasSettings {
         val target = targets.firstOrNull { target ->
             aliases(alias(context, target)).any { TriggerSettings.effectiveAlias(it) == prefix }
         } ?: return null
-        return AliasMatch(target, prefix, input.substring(split + 1).trim())
+        val query = input.substring(split + 1).trim()
+        return when (target.id) {
+            "maps" -> mapsMatch(target, prefix, query)
+            "onepassword" -> AliasMatch(
+                target,
+                prefix,
+                query,
+                previewTitle = "Search 1Password",
+                previewSubtitle = "opens the app if search is unavailable",
+            )
+            else -> AliasMatch(target, prefix, query)
+        }
     }
     fun usesPrefix(context: Context, prefix: Char): Boolean = targets.any { target ->
         aliases(alias(context, target)).any { TriggerSettings.effectiveAlias(it).startsWith(prefix) }
@@ -53,4 +76,75 @@ object AliasSettings {
 
     private fun normalize(value: String) = value.trim().lowercase()
         .filter { it.isLetterOrDigit() || it == '_' || it == '-' || it == '.' || it == '!' }
+
+    private fun mapsMatch(target: SearchTarget, alias: String, query: String): AliasMatch {
+        var remainder = query.trim()
+        var travelMode: String? = null
+        val modes = listOf(
+            Regex("^(drive|driving)\\s+", RegexOption.IGNORE_CASE) to "driving",
+            Regex("^(walk|walking)\\s+", RegexOption.IGNORE_CASE) to "walking",
+            Regex("^(bike|biking|bicycle|cycle|cycling)\\s+", RegexOption.IGNORE_CASE) to "bicycling",
+            Regex("^(transit|public transport|train)\\s+", RegexOption.IGNORE_CASE) to "transit",
+        )
+        modes.firstOrNull { it.first.containsMatchIn(remainder) }?.let { (pattern, mode) ->
+            remainder = remainder.replaceFirst(pattern, "").trim()
+            travelMode = mode
+        }
+
+        val fromTo = Regex("^from\\s+(.+?)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(remainder)
+        val destinationFrom = Regex("^(.+?)\\s+from\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(remainder)
+        val originTo = Regex("^(.+?)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(remainder)
+        val destinationOnly = Regex("^to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(remainder)
+        val originOnly = Regex("^from\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(remainder)
+        val origin: String?
+        val destination: String?
+        when {
+            fromTo != null -> {
+                origin = fromTo.groupValues[1].trim()
+                destination = fromTo.groupValues[2].trim()
+            }
+            destinationFrom != null -> {
+                destination = destinationFrom.groupValues[1].trim()
+                origin = destinationFrom.groupValues[2].trim()
+            }
+            originTo != null -> {
+                origin = originTo.groupValues[1].trim()
+                destination = originTo.groupValues[2].trim()
+            }
+            destinationOnly != null -> {
+                origin = null
+                destination = destinationOnly.groupValues[1].trim()
+            }
+            originOnly != null -> {
+                origin = originOnly.groupValues[1].trim()
+                destination = null
+            }
+            else -> {
+                origin = null
+                destination = null
+            }
+        }
+
+        if (!origin.isNullOrBlank() || !destination.isNullOrBlank()) {
+            val modeLabel = travelMode?.replaceFirstChar { it.uppercase() }
+            return AliasMatch(
+                target = target,
+                alias = alias,
+                query = query,
+                previewTitle = "Directions",
+                previewSubtitle = buildString {
+                    append(origin ?: "Current location")
+                    append(" → ")
+                    append(destination ?: "Choose destination")
+                    modeLabel?.let { append(" · ").append(it) }
+                },
+                routeOrigin = origin,
+                routeDestination = destination,
+                travelMode = travelMode,
+                isDirections = true,
+            )
+        }
+        val searchQuery = remainder.ifBlank { query }
+        return AliasMatch(target, alias, searchQuery, previewTitle = "Search Maps", previewSubtitle = searchQuery)
+    }
 }

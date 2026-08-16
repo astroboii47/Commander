@@ -2,6 +2,7 @@ package com.astroboii47.commander
 
 import android.Manifest
 import android.app.Activity
+import android.app.SearchManager
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
@@ -28,6 +29,7 @@ import java.nio.charset.StandardCharsets
 import java.io.File
 import android.util.Size
 import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -42,6 +44,12 @@ class CommandEngine(private val activity: Activity) {
 
     fun directTodoistEnabled(): Boolean = TodoistSettings.directEnabled(activity)
     fun directSmsEnabled(): Boolean = SmsSettings.directEnabled(activity)
+    fun hasContactsPermission(): Boolean =
+        ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+
+    fun requestContactsPermission() {
+        ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), 4302)
+    }
 
     fun hasGeminiKey(): Boolean = GeminiSettings.apiKey(activity).isNotBlank()
 
@@ -292,6 +300,37 @@ class CommandEngine(private val activity: Activity) {
 
     fun openAlias(match: AliasMatch): String? {
         if (match.query.isBlank()) return "Type a search after the alias"
+        if (match.target.id == "gmail") {
+            val search = Intent(Intent.ACTION_SEARCH).apply {
+                setPackage("com.google.android.gm")
+                putExtra(SearchManager.QUERY, match.query)
+            }
+            val encoded = Uri.encode(match.query)
+            return startOrFallback(
+                search,
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://mail.google.com/mail/u/0/#search/$encoded")),
+                "Gmail is unavailable",
+            )
+        }
+        if (match.target.id == "onepassword") {
+            val search = Intent(Intent.ACTION_SEARCH).apply {
+                setPackage("com.onepassword.android")
+                putExtra(SearchManager.QUERY, match.query)
+            }
+            val launch = packageManager.getLaunchIntentForPackage("com.onepassword.android")
+                ?: packageManager.getLaunchIntentForPackage("com.agilebits.onepassword")
+            return startOrFallback(search, launch, "1Password is unavailable")
+        }
+        if (match.target.id == "maps" && match.isDirections) {
+            val builder = Uri.parse("https://www.google.com/maps/dir/").buildUpon()
+                .appendQueryParameter("api", "1")
+            match.routeOrigin?.let { builder.appendQueryParameter("origin", it) }
+            match.routeDestination?.let { builder.appendQueryParameter("destination", it) }
+            match.travelMode?.let { builder.appendQueryParameter("travelmode", it) }
+            val uri = builder.build()
+            val targeted = Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps")
+            return startOrFallback(targeted, Intent(Intent.ACTION_VIEW, uri), "Google Maps is unavailable")
+        }
         val encoded = URLEncoder.encode(match.query, StandardCharsets.UTF_8.toString()).replace("+", "%20")
         val uri = Uri.parse(match.target.urlTemplate.replace("%s", encoded))
         val targeted = Intent(Intent.ACTION_VIEW, uri).apply { match.target.packageName?.let(::setPackage) }

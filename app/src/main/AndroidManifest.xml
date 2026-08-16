@@ -24,6 +24,9 @@
         <package android:name="com.android.vending" />
         <package android:name="com.waze" />
         <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.google.android.gm" />
+        <package android:name="com.onepassword.android" />
+        <package android:name="com.agilebits.onepassword" />
         <package android:name="com.google.android.youtube" />
         <package android:name="com.reddit.frontpage" />
         <package android:name="com.spotify.music" />
