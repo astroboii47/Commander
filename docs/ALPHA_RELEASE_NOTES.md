@@ -26,7 +26,7 @@ This release has been tested primarily with Todoist, Google Calendar, the defaul
 
 ## Important limitations
 
-- This is alpha software. Back up your Commander settings before updating.
+- This is alpha software. Features may change and bugs are expected.
 - Home-screen typing depends on Accessibility, the active launcher, and device keyboard behaviour.
 - Commander Home is experimental and hidden in this release.
 - WhatsApp and Messenger features depend on shortcuts, app intents, or live notifications with reply actions.
