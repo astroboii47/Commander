@@ -302,7 +302,7 @@ class CommandEngine(private val activity: Activity) {
         if (match.query.isBlank()) return "Type a search after the alias"
         if (match.target.id == "gmail") {
             val search = Intent(Intent.ACTION_SEARCH).apply {
-                setPackage("com.google.android.gm")
+                setClassName("com.google.android.gm", "com.google.android.gm.ui.MailActivityGmail")
                 putExtra(SearchManager.QUERY, match.query)
             }
             val encoded = Uri.encode(match.query)
@@ -313,13 +313,24 @@ class CommandEngine(private val activity: Activity) {
             )
         }
         if (match.target.id == "onepassword") {
-            val search = Intent(Intent.ACTION_SEARCH).apply {
-                setPackage("com.onepassword.android")
-                putExtra(SearchManager.QUERY, match.query)
+            val search = Intent("onepassword.action.SEARCH").apply {
+                setClassName("com.onepassword.android", "com.onepassword.android.app.StartActivity")
             }
             val launch = packageManager.getLaunchIntentForPackage("com.onepassword.android")
                 ?: packageManager.getLaunchIntentForPackage("com.agilebits.onepassword")
+            OnePasswordSearchBridge.arm(activity.applicationContext, match.query)
             return startOrFallback(search, launch, "1Password is unavailable")
+        }
+        if (match.target.id == "waze" && match.isDirections) {
+            val destination = match.routeDestination
+                ?: return "Waze routes must have a destination"
+            val uri = Uri.parse("https://www.waze.com/ul").buildUpon()
+                .appendQueryParameter("q", destination)
+                .appendQueryParameter("navigate", "yes")
+                .appendQueryParameter("utm_source", "commander")
+                .build()
+            val targeted = Intent(Intent.ACTION_VIEW, uri).setPackage("com.waze")
+            return startOrFallback(targeted, Intent(Intent.ACTION_VIEW, uri), "Waze is unavailable")
         }
         if (match.target.id == "maps" && match.isDirections) {
             val builder = Uri.parse("https://www.google.com/maps/dir/").buildUpon()

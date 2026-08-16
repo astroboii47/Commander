@@ -55,6 +55,14 @@ class HomeTypingAccessibilityService : AccessibilityService() {
                 }, 700L)
             }
         }
+        if (event?.packageName?.toString() == "com.onepassword.android" &&
+            (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        ) {
+            if (OnePasswordSearchBridge.tryFill(this, rootInActiveWindow ?: event.source)) {
+                finishAutomationMonitoring()
+            }
+        }
         // TYPE_WINDOWS_CHANGED is also emitted for transient System UI panels,
         // IME surfaces and accessibility overlays. Do not let those replace the
         // last real activity package or home typing will appear to stop at random.

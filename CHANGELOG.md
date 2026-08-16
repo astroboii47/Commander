@@ -3,8 +3,9 @@
 ## 0.1.0-alpha.2
 
 - Added structured Google Maps searches and directions with `from`, `to`, and travel-mode parsing.
-- Added Gmail search hand-off through Gmail's Android search activity.
-- Added a best-effort 1Password search hand-off with a safe app-launch fallback.
+- Added Gmail search hand-off through Gmail's exact Android search activity.
+- Added 1Password search hand-off through its Search shortcut and scoped accessibility query entry.
+- Added structured Waze search and current-location navigation hand-off.
 - Reworked contact permission prompts so access is requested with context from Settings or first use.
 
 ## 0.1.0-alpha.1

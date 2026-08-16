@@ -56,6 +56,7 @@ object AliasSettings {
         val query = input.substring(split + 1).trim()
         return when (target.id) {
             "maps" -> mapsMatch(target, prefix, query)
+            "waze" -> wazeMatch(target, prefix, query)
             "onepassword" -> AliasMatch(
                 target,
                 prefix,
@@ -146,5 +147,37 @@ object AliasSettings {
         }
         val searchQuery = remainder.ifBlank { query }
         return AliasMatch(target, alias, searchQuery, previewTitle = "Search Maps", previewSubtitle = searchQuery)
+    }
+
+    private fun wazeMatch(target: SearchTarget, alias: String, query: String): AliasMatch {
+        var remainder = query.trim()
+        val drivePrefix = Regex("^(drive|driving)\\s+", RegexOption.IGNORE_CASE)
+        val driveRequested = drivePrefix.containsMatchIn(remainder)
+        remainder = remainder.replaceFirst(drivePrefix, "").trim()
+        val fromTo = Regex("^from\\s+(.+?)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(remainder)
+        val destinationOnly = Regex("^to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(remainder)
+        val destination = when {
+            fromTo != null -> fromTo.groupValues[2].trim()
+            destinationOnly != null -> destinationOnly.groupValues[1].trim()
+            driveRequested -> remainder
+            else -> null
+        }
+        return if (!destination.isNullOrBlank()) {
+            AliasMatch(
+                target = target,
+                alias = alias,
+                query = destination,
+                previewTitle = "Navigate with Waze",
+                previewSubtitle = buildString {
+                    append("Current location → ").append(destination)
+                    if (fromTo != null) append(" · Waze uses current location as the start")
+                },
+                routeDestination = destination,
+                travelMode = "driving",
+                isDirections = true,
+            )
+        } else {
+            AliasMatch(target, alias, remainder, previewTitle = "Search Waze", previewSubtitle = remainder)
+        }
     }
 }
