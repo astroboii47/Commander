@@ -1,11 +1,17 @@
 <p align="center">
-  <img src="docs/assets/commander-icon.png" width="128" alt="Commander icon">
+  <img src="docs/assets/commander-github.svg" width="128" alt="Commander icon">
 </p>
 
 <h1 align="center">Commander</h1>
 
 <p align="center">
   A fast, keyboard-first command bar and notification hub for Android.
+</p>
+
+<p align="center">
+  <a href="https://ko-fi.com/astroboii47">
+    <img src="docs/assets/kofi-button.png" height="36" alt="Support Commander on Ko-fi">
+  </a>
 </p>
 
 > [!IMPORTANT]
@@ -39,19 +45,17 @@ This project can only improve as a group effort. Testing, device reports, ideas,
 ## See Commander in action
 
 <p align="center">
-  <a href="https://github.com/astroboii47/Commander/releases/download/v0.1.0-alpha.1/commander-demo.mp4">
-    <img src="docs/media/commander-demo-poster.jpg" width="720" alt="Commander app search demonstration">
-  </a>
+  <img src="docs/media/commander-demo.gif" width="720" alt="Commander app search demonstration">
   <br>
-  <sub>12-second interface demo. Select the image to watch.</sub>
+  <sub>Fast app search from a physical keyboard.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/astroboii47/Commander/releases/download/v0.1.0-alpha.1/commander-in-hand.mp4">
+  <a href="https://github.com/astroboii47/Commander/releases/download/untagged-342a3d7e3da1847d7643/commander-in-hand.mp4">
     <img src="docs/media/commander-in-hand-poster.jpg" width="300" alt="Commander running on a physical-keyboard phone">
   </a>
   <br>
-  <sub>Commander in hand on physical-keyboard hardware.</sub>
+  <sub>Select to watch the full in-hand walkthrough.</sub>
 </p>
 
 <table>
@@ -179,7 +183,13 @@ Device reports, focused bug reports, and small pull requests are welcome. Please
 
 ## Support development
 
-If Commander is useful to you, you can support continued development on [Ko-fi](https://ko-fi.com/astroboii47).
+Commander is an open-source passion project. If it makes your phone faster or a little more fun to use, you can help support continued development:
+
+<p>
+  <a href="https://ko-fi.com/astroboii47">
+    <img src="docs/assets/kofi-button.png" height="42" alt="Support Commander on Ko-fi">
+  </a>
+</p>
 
 ## Licence and attribution
 
