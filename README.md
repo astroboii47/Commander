@@ -94,6 +94,8 @@ Other apps may work when they expose compatible Android intents, shortcuts, or n
 
 ## Install and set up
 
+**[Open the Commander releases page to download the latest APK](https://github.com/astroboii47/Commander/releases/latest)**
+
 1. Download the APK from the latest GitHub release.
 2. Allow installation from the app you used to download it, then install Commander.
 3. Open **Commander Settings**.
