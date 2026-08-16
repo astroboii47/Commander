@@ -1,0 +1,29 @@
+# Android and Gradle
+.gradle/
+.kotlin/
+build/
+**/build/
+local.properties
+
+# IDE and operating system
+.idea/
+*.iml
+.DS_Store
+
+# Signing and credentials
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+.env
+.env.*
+
+# Build artifacts and local captures
+*.apk
+*.aab
+captures/
+
+# Local design exploration; production app assets live under app/src/main/res.
+branding/

@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+        <package android:name="com.google.android.keep" />
+        <package android:name="com.todoist" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.facebook.orca" />
+        <package android:name="com.google.android.apps.messaging" />
+        <package android:name="com.android.vending" />
+        <package android:name="com.waze" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.reddit.frontpage" />
+        <package android:name="com.spotify.music" />
+        <package android:name="com.facebook.katana" />
+        <package android:name="com.google.android.apps.photos" />
+        <package android:name="com.google.android.apps.docs" />
+        <package android:name="pl.solidexplorer2" />
+        <package android:name="com.ebay.mobile" />
+        <package android:name="org.mozilla.focus" />
+        <package android:name="company.thebrowser.arc" />
+        <package android:name="com.amazon.mShop.android.shopping" />
+    </queries>
+
+    <application
+        android:name=".MinimalCommandApplication"
+        android:allowBackup="true"
+        android:icon="@drawable/ic_commander_bar"
+        android:label="Commander"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MinimalCommand">
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_bar"
+            android:label="Commander Settings" />
+        <activity
+            android:name=".MainActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true"
+            android:icon="@drawable/ic_commander_home"
+            android:launchMode="singleTop"
+            android:label="Commander Home"
+            android:screenOrientation="unspecified">
+            <intent-filter>
+                <action android:name="com.astroboii47.commander.OPEN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- Keep Home usable internally while allowing a release build to hide
+             only its launcher entry by setting commander_home_launcher_enabled false. -->
+        <activity-alias
+            android:name=".CommanderHomeLauncherAlias"
+            android:enabled="@bool/commander_home_launcher_enabled"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_home"
+            android:label="Commander Home"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity
+            android:name=".OverlayActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true"
+            android:launchMode="singleTop"
+            android:taskAffinity="com.astroboii47.commander.overlay"
+            android:theme="@style/Theme.MinimalCommand.Overlay">
+            <intent-filter>
+                <action android:name="com.astroboii47.commander.OPEN_OVERLAY" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".CommandBarActionActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true"
+            android:icon="@drawable/ic_commander_bar"
+            android:label="Commander Bar"
+            android:launchMode="singleTop"
+            android:noHistory="true"
+            android:taskAffinity="com.astroboii47.commander.overlay"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="com.astroboii47.commander.OPEN_COMMAND_BAR" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.CREATE_SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".HubActivity"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_hub"
+            android:label="Commander Hub"
+            android:theme="@style/Theme.MinimalCommand.Hub" />
+        <activity-alias
+            android:name=".CommanderHubLauncherAlias"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_bar"
+            android:label="Commander"
+            android:targetActivity=".HubActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <service
+            android:name=".HubNotificationService"
+            android:exported="false"
+            android:label="Commander Hub"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".HomeTypingAccessibilityService"
+            android:exported="true"
+            android:label="Commander home typing"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/home_typing_accessibility" />
+        </service>
+        <receiver
+            android:name=".AppPackageChangedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".RootHomeTypingBootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

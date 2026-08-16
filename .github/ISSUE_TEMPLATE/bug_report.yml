@@ -1,0 +1,53 @@
+name: Bug report or device compatibility
+description: Report reproducible behaviour on a specific Android device.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Remove private messages, contacts, API keys, and notification content before attaching anything.
+  - type: input
+    id: version
+    attributes:
+      label: Commander version
+      placeholder: 0.1.0-alpha.1
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: Unihertz Titan 2, Android 15
+    validations:
+      required: true
+  - type: input
+    id: input
+    attributes:
+      label: Keyboard, launcher, and input method
+      placeholder: Physical keyboard, Total Launcher, Pastiera
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the command or feature used, but replace private content with examples.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials and private content from this report.
+          required: true

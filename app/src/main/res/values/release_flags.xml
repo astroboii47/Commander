@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Set false for a public build while Commander Home remains experimental. -->
+    <bool name="commander_home_launcher_enabled">false</bool>
+</resources>

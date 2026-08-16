@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_typing_accessibility_description">Open Commander Bar when you begin typing on the home screen.</string>
+    <string name="shortcut_command_bar_short">Commander Bar</string>
+    <string name="shortcut_command_bar_long">Open Commander Bar</string>
+    <string name="shortcut_hub_short">Commander Hub</string>
+    <string name="shortcut_hub_long">Open Commander Hub</string>
+    <string name="shortcut_settings_short">Settings</string>
+    <string name="shortcut_settings_long">Open Commander Settings</string>
+</resources>
