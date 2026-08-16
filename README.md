@@ -97,7 +97,7 @@ Other apps may work when they expose compatible Android intents, shortcuts, or n
 **[Open the Commander releases page to download the latest APK](https://github.com/astroboii47/Commander/releases)**
 
 > [!WARNING]
-> **Play Protect may warn that Commander is unknown or block the installation.** Commander is currently distributed directly through GitHub rather than Google Play, so new releases do not yet have Play Store reputation. Commander also offers optional Accessibility, notification, contact, SMS, file, and root-assisted features, which Android correctly treats as sensitive. These permissions are requested only for the related features and are explained in [PRIVACY.md](PRIVACY.md).
+> **Play Protect may warn that Commander is unknown or block the installation.** Commander is currently distributed directly through GitHub rather than Google Play, so new releases do not yet have Play Store reputation. Commander also offers optional Accessibility, notification, contact, SMS, and file features, which Android correctly treats as sensitive. These permissions are requested only for the related features and are explained in [PRIVACY.md](PRIVACY.md).
 >
 > Download Commander only from this repository's [Releases page](https://github.com/astroboii47/Commander/releases). Each release includes a SHA-256 checksum so you can verify that the APK was downloaded intact. Do not disable Play Protect globally. If Android does not offer an informed install-anyway option, wait for a verified distribution route or build Commander from the public source.
 
@@ -109,7 +109,7 @@ Other apps may work when they expose compatible Android intents, shortcuts, or n
 
 Android may block Accessibility for manually installed apps until **Allow restricted settings** is enabled from Commander’s Android app-info page. Commander Settings provides direct links to both app info and Accessibility.
 
-See the [complete setup guide](docs/SETUP.md) for notification access, home typing, files, contacts, Todoist, Gemini, Tasker, root assistance, and keyboard shortcuts.
+See the [complete setup guide](docs/SETUP.md) for notification access, home typing, files, contacts, Todoist, Gemini, Tasker, and keyboard shortcuts.
 
 ## Default commands
 
@@ -142,7 +142,7 @@ Messaging integrations have additional Android and app-level constraints. WhatsA
 
 Commander has no advertising or analytics SDK. Data is processed locally except when you explicitly use a feature that contacts an external service, such as Gemini, Todoist, or a web/app search.
 
-Powerful permissions are optional and feature-specific. Notification access, Accessibility, contacts, SMS, full-file access, and root assistance should be enabled only if you use the corresponding feature. Gemini and Todoist credentials are encrypted with Android Keystore before being stored.
+Powerful permissions are optional and feature-specific. Notification access, Accessibility, contacts, SMS, and full-file access should be enabled only if you use the corresponding feature. Gemini and Todoist credentials are encrypted with Android Keystore before being stored.
 
 Read [PRIVACY.md](PRIVACY.md) for the complete data and permission explanation.
 
@@ -152,7 +152,6 @@ Read [PRIVACY.md](PRIVACY.md) for the complete data and permission explanation.
 - Blur support varies by device and firmware.
 - Messaging-app automation depends on the intents, shortcuts, notifications, or reply actions exposed by those apps.
 - File access and folder opening can vary by file manager and Android storage implementation.
-- Root-assisted Accessibility persistence is optional and device-specific.
 - Commander Home remains experimental and is hidden from the alpha launcher build.
 
 ## Roadmap

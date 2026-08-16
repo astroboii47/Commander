@@ -301,9 +301,16 @@ class CommandEngine(private val activity: Activity) {
     fun openAlias(match: AliasMatch): String? {
         if (match.query.isBlank()) return "Type a search after the alias"
         if (match.target.id == "gmail") {
+            val launch = packageManager.getLaunchIntentForPackage("com.google.android.gm")
+                ?: return "Gmail is unavailable"
+            if (HomeTypingAccessibilityService.isConnected()) {
+                GmailSearchBridge.arm(activity.applicationContext, match.query)
+                return startOrFallback(launch, null, "Gmail is unavailable")
+            }
             val search = Intent(Intent.ACTION_SEARCH).apply {
                 setClassName("com.google.android.gm", "com.google.android.gm.ui.MailActivityGmail")
                 putExtra(SearchManager.QUERY, match.query)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
             val encoded = Uri.encode(match.query)
             return startOrFallback(

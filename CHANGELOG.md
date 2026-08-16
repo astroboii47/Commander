@@ -6,6 +6,8 @@
 - Added Gmail search hand-off through Gmail's exact Android search activity.
 - Added 1Password search hand-off through its Search shortcut and scoped accessibility query entry.
 - Added structured Waze search and current-location navigation hand-off.
+- Reworked Gmail search to open the stable launcher activity and enter the query through scoped accessibility automation.
+- Removed root-assisted Accessibility persistence from the public app.
 - Reworked contact permission prompts so access is requested with context from Settings or first use.
 
 ## 0.1.0-alpha.1

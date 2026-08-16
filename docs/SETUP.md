@@ -14,7 +14,7 @@ Download the APK from GitHub Releases and install it. Android may ask you to all
 
 ### Play Protect warning
 
-Play Protect may describe Commander as unknown or block installation because the alpha is distributed directly through GitHub rather than Google Play. Commander also provides optional features that use sensitive Android access, including Accessibility, notification access, contacts, SMS, files, and root assistance.
+Play Protect may describe Commander as unknown or block installation because the alpha is distributed directly through GitHub rather than Google Play. Commander also provides optional features that use sensitive Android access, including Accessibility, notification access, contacts, SMS, and files.
 
 This warning should not be bypassed blindly. Download the APK only from the official Commander Releases page and compare it with the SHA-256 checksum attached to that release. Do not disable Play Protect globally. If Android does not provide an informed install-anyway option, wait for a verified distribution route or build the app from the public source.
 
@@ -41,8 +41,6 @@ The normal Android launcher entry opens Commander Hub. Commander Home is experim
 6. Enable **Commander home typing**.
 
 This service listens for physical key events while a launcher home screen is active. It does not enable Commander over every app; use the normal Commander Bar shortcut outside the launcher.
-
-The optional root setting can restore this Accessibility service after reboot on supported rooted devices. It invokes `su` only when that setting is enabled.
 
 ## 4. Commander Hub
 

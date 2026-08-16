@@ -178,8 +178,6 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var homeTyping by remember { mutableStateOf(HomeTypingSettings.enabled.value) }
     var openSingleAppResult by remember { mutableStateOf(AppSearchSettings.openSingleResult.value) }
     var holdFirstForAlt by remember { mutableStateOf(HomeTypingSettings.holdFirstForAlt.value) }
-    var rootHomeTyping by remember { mutableStateOf(RootHomeTyping.enabled(activity)) }
-    var rootStatus by remember { mutableStateOf<String?>(null) }
     var showHubSummaries by remember { mutableStateOf(HubSettings.showSummaries.value) }
     var quickHubNavigation by remember { mutableStateOf(HubSettings.quickKeyboardNavigation.value) }
     var geminiKey by remember { mutableStateOf(GeminiSettings.apiKey(activity)) }
@@ -411,28 +409,6 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
                 onCheckedChange = { enabled ->
                     holdFirstForAlt = enabled
                     HomeTypingSettings.saveHoldFirstForAlt(activity, enabled)
-                },
-                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
-            )
-        }
-        Spacer(Modifier.height(18.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text("Keep enabled with root", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Rooted devices only · restores home typing after updates and restarts", color = Color(0xFF99958E), fontSize = 12.sp)
-                rootStatus?.let { Text(it, color = accent, fontSize = 11.sp) }
-            }
-            Switch(
-                checked = rootHomeTyping,
-                onCheckedChange = { enabled ->
-                    rootHomeTyping = enabled
-                    RootHomeTyping.setEnabled(activity, enabled)
-                    rootStatus = if (enabled) "requesting root…" else null
-                    if (enabled) RootHomeTyping.ensureEnabledAsync(activity) { success ->
-                        activity.runOnUiThread {
-                            rootStatus = if (success) "home typing enabled" else "root unavailable or denied"
-                        }
-                    }
                 },
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )

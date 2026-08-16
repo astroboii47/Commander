@@ -63,6 +63,14 @@ class HomeTypingAccessibilityService : AccessibilityService() {
                 finishAutomationMonitoring()
             }
         }
+        if (event?.packageName?.toString() == "com.google.android.gm" &&
+            (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        ) {
+            if (GmailSearchBridge.tryFill(this, rootInActiveWindow ?: event.source)) {
+                finishAutomationMonitoring()
+            }
+        }
         // TYPE_WINDOWS_CHANGED is also emitted for transient System UI panels,
         // IME surfaces and accessibility overlays. Do not let those replace the
         // last real activity package or home typing will appear to stop at random.
@@ -233,5 +241,7 @@ class HomeTypingAccessibilityService : AccessibilityService() {
         fun automationFinished() {
             activeService?.get()?.finishAutomationMonitoring()
         }
+
+        fun isConnected(): Boolean = activeService?.get() != null
     }
 }

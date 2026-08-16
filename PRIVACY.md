@@ -15,7 +15,6 @@ Uninstalling Commander removes its private app data. Android backup behaviour ca
 - **Contacts:** searches local contacts for calling and messaging commands.
 - **SMS:** sends an SMS only after the user invokes the corresponding messaging workflow.
 - **Files:** searches shared storage when full-file access is granted.
-- **Root:** when explicitly enabled, requests `su` to keep Commander’s Accessibility service enabled across reboot. Root is not required for normal operation.
 
 ## External services
 
