@@ -96,6 +96,11 @@ Other apps may work when they expose compatible Android intents, shortcuts, or n
 
 **[Open the Commander releases page to download the latest APK](https://github.com/astroboii47/Commander/releases)**
 
+> [!WARNING]
+> **Play Protect may warn that Commander is unknown or block the installation.** Commander is currently distributed directly through GitHub rather than Google Play, so new releases do not yet have Play Store reputation. Commander also offers optional Accessibility, notification, contact, SMS, file, and root-assisted features, which Android correctly treats as sensitive. These permissions are requested only for the related features and are explained in [PRIVACY.md](PRIVACY.md).
+>
+> Download Commander only from this repository's [Releases page](https://github.com/astroboii47/Commander/releases). Each release includes a SHA-256 checksum so you can verify that the APK was downloaded intact. Do not disable Play Protect globally. If Android does not offer an informed install-anyway option, wait for a verified distribution route or build Commander from the public source.
+
 1. Download the APK from the latest GitHub release.
 2. Allow installation from the app you used to download it, then install Commander.
 3. Open **Commander Settings**.

@@ -12,6 +12,12 @@ Commander is modular. Enable only the access required by the features you use.
 
 Download the APK from GitHub Releases and install it. Android may ask you to allow installations from your browser or file manager.
 
+### Play Protect warning
+
+Play Protect may describe Commander as unknown or block installation because the alpha is distributed directly through GitHub rather than Google Play. Commander also provides optional features that use sensitive Android access, including Accessibility, notification access, contacts, SMS, files, and root assistance.
+
+This warning should not be bypassed blindly. Download the APK only from the official Commander Releases page and compare it with the SHA-256 checksum attached to that release. Do not disable Play Protect globally. If Android does not provide an informed install-anyway option, wait for a verified distribution route or build the app from the public source.
+
 Updates must be signed with the same key as the installed build. If Android reports an incompatible signature, uninstall the previous development build before installing the public alpha. Uninstalling clears Commander settings.
 
 ## 2. Open Commander Bar
