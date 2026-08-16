@@ -58,7 +58,12 @@ fun parseCommand(input: String): ParsedCommand {
         first == FileSearchSettings.trigger.value -> CommandKind.Files
         else -> CommandKind.entries.firstOrNull { it != CommandKind.Note && it != CommandKind.Files && it.symbol == first } ?: CommandKind.Apps
     }
-    return ParsedCommand(kind, if (kind == CommandKind.Apps) input.trim() else input.drop(1).trim())
+    val text = when (kind) {
+        CommandKind.Apps -> input.trim()
+        CommandKind.Files -> input.drop(1).trimStart()
+        else -> input.drop(1).trim()
+    }
+    return ParsedCommand(kind, text)
 }
 
 fun commandSymbol(kind: CommandKind): Char? = when (kind) {

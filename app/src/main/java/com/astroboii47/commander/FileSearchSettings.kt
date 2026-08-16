@@ -43,14 +43,17 @@ object FileSearchSettings {
     fun displayTrigger(): String = if (trigger.value == ' ') "space" else trigger.value.toString()
 
     fun parseFilter(text: String): FileSearchQuery {
-        val split = text.indexOf(' ')
-        if (split <= 0) return FileSearchQuery(text, FileSearchMode.Default)
-        val prefix = text.substring(0, split).trim().lowercase()
-        val query = text.substring(split + 1).trim()
-        return when (prefix) {
-            filesOnlyPrefix.value -> FileSearchQuery(query, FileSearchMode.FilesOnly)
-            foldersOnlyPrefix.value -> FileSearchQuery(query, FileSearchMode.FoldersOnly)
-            else -> FileSearchQuery(text, FileSearchMode.Default)
+        val input = text.trimStart()
+        val filesPrefix = filesOnlyPrefix.value.trim().lowercase()
+        val foldersPrefix = foldersOnlyPrefix.value.trim().lowercase()
+        return when {
+            input.equals(filesPrefix, ignoreCase = true) -> FileSearchQuery("", FileSearchMode.FilesOnly)
+            input.startsWith("$filesPrefix ", ignoreCase = true) ->
+                FileSearchQuery(input.substring(filesPrefix.length).trimStart(), FileSearchMode.FilesOnly)
+            input.equals(foldersPrefix, ignoreCase = true) -> FileSearchQuery("", FileSearchMode.FoldersOnly)
+            input.startsWith("$foldersPrefix ", ignoreCase = true) ->
+                FileSearchQuery(input.substring(foldersPrefix.length).trimStart(), FileSearchMode.FoldersOnly)
+            else -> FileSearchQuery(input.trim(), FileSearchMode.Default)
         }
     }
 

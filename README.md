@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/commander-github.svg" width="128" alt="Commander icon">
+  <img src="docs/assets/commander-icon.png" width="128" alt="Commander icon">
 </p>
 
 <h1 align="center">Commander</h1>
@@ -50,14 +50,6 @@ This project can only improve as a group effort. Testing, device reports, ideas,
   <sub>Fast app search from a physical keyboard.</sub>
 </p>
 
-<p align="center">
-  <a href="https://github.com/astroboii47/Commander/releases/download/untagged-342a3d7e3da1847d7643/commander-in-hand.mp4">
-    <img src="docs/media/commander-in-hand-poster.jpg" width="300" alt="Commander running on a physical-keyboard phone">
-  </a>
-  <br>
-  <sub>Select to watch the full in-hand walkthrough.</sub>
-</p>
-
 <table>
   <tr>
     <td align="center"><img src="docs/media/app-search.png" alt="Commander app search"><br><sub>Fast app search</sub></td>
@@ -68,6 +60,14 @@ This project can only improve as a group effort. Testing, device reports, ideas,
     <td align="center"><img src="docs/media/commander-hub.png" alt="Commander Hub"><br><sub>Commander Hub</sub></td>
   </tr>
 </table>
+
+<p align="center">
+  <a href="https://github.com/astroboii47/Commander/releases/download/untagged-342a3d7e3da1847d7643/commander-in-hand.mp4">
+    <img src="docs/media/commander-in-hand-poster.jpg" width="300" alt="Commander running on a physical-keyboard phone">
+  </a>
+  <br>
+  <sub>Select to watch the full in-hand walkthrough.</sub>
+</p>
 
 ## Tested devices
 

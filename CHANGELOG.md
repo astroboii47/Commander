@@ -8,6 +8,8 @@
 - Added appearance, glow, blur, sound, trigger, alias, and integration settings.
 - Added versioned settings export and import for device and package migration.
 - Added phone-number normalisation to remove duplicate contact results caused only by formatting.
+- Fixed files-only and folders-only prefixes so filter state remains stable while typing.
+- Prevented directory-like storage records from appearing as files.
 - Prepared the permanent `com.astroboii47.commander` application identity.
 
 ## 0.1.0-alpha.1

@@ -127,11 +127,15 @@ class CommandEngine(private val activity: Activity) {
                 buildList {
                     while (cursor.moveToNext() && size < limit) {
                         val id = cursor.getLong(idColumn)
+                        val mimeType = cursor.getString(mimeColumn)
+                        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
+                            mimeType == "resource/folder"
+                        ) continue
                         add(
                             FileResult(
                                 name = cursor.getString(nameColumn).orEmpty(),
                                 uri = ContentUris.withAppendedId(collection, id),
-                                mimeType = cursor.getString(mimeColumn),
+                                mimeType = mimeType,
                                 location = cursor.getString(pathColumn).orEmpty().trimEnd('/'),
                                 modifiedAtMillis = cursor.getLong(modifiedColumn) * 1000L,
                             ),

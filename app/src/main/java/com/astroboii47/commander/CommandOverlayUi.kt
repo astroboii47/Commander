@@ -172,7 +172,12 @@ fun CommandOverlayApp(
     val isHomeTypingLaunch = remember { initialQuery.isNotEmpty() && HomeTypingHandoff.isCollecting() }
     val askPrompt = remember(initialAskPrompt) { initialAskPrompt.orEmpty() }
     val parsed = remember(query) { parseCommand(query) }
-    val fileSearchQuery = remember(parsed.kind, parsed.text) {
+    val fileSearchQuery = remember(
+        parsed.kind,
+        parsed.text,
+        FileSearchSettings.filesOnlyPrefix.value,
+        FileSearchSettings.foldersOnlyPrefix.value,
+    ) {
         if (parsed.kind == CommandKind.Files) FileSearchSettings.parseFilter(parsed.text)
         else FileSearchQuery(parsed.text, FileSearchMode.Default)
     }
@@ -1377,7 +1382,7 @@ private fun OverlayFileResults(files: List<FileResult>, selectedIndex: Int, pale
                     contentDescription = "Folder",
                     tint = if (index == selectedIndex) OverlayAccent else palette.secondary,
                     modifier = Modifier.size(22.dp),
-                ) else Text("▤", color = if (index == selectedIndex) OverlayAccent else palette.secondary, fontFamily = OverlayMono, fontSize = 18.sp)
+                ) else Text("▧", color = if (index == selectedIndex) OverlayAccent else palette.secondary, fontFamily = OverlayMono, fontSize = 20.sp)
             }
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(file.name, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
