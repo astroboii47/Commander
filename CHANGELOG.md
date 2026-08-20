@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-alpha.3.1
+
+- Added keyboard-driven seen state in Commander Hub. A notification becomes seen after remaining selected for 300 ms.
+- Fixed reply popups opened with O or Enter so the notification is marked seen in Commander.
+- Kept rapidly passed notifications unseen and preserved Android's original notification state.
+
 ## 0.1.0-alpha.3
 
 - Added optional web-search fallback when app search has no matches.

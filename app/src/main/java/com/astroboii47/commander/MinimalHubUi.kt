@@ -127,6 +127,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
     var replyText by remember { mutableStateOf("") }
     var replyStatus by remember { mutableStateOf<Pair<String, String>?>(null) }
     var selectedIndex by remember { mutableStateOf(0) }
+    var keyboardBrowsing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val notificationScroll = rememberScrollState()
     val allItems = HubRepository.items
@@ -158,6 +159,13 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
         readTimes = readTimes + (item.key to item.time)
         readPrefs.edit().putLong(item.key, item.time).apply()
     }
+    LaunchedEffect(keyboardBrowsing, selectedIndex, visible.getOrNull(selectedIndex)?.key) {
+        if (keyboardBrowsing) {
+            val selected = visible.getOrNull(selectedIndex) ?: return@LaunchedEffect
+            delay(300)
+            markRead(selected)
+        }
+    }
     fun cycleCategory(packageName: String) {
         val order = listOf("auto", "messages", "calls", "email", "finance", "tasks", "apps")
         val current = categoryOverrides[packageName] ?: "auto"
@@ -175,16 +183,19 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
             when (keyCode) {
                 android.view.KeyEvent.KEYCODE_DPAD_UP,
                 android.view.KeyEvent.KEYCODE_I.takeIf { quick } -> {
+                    keyboardBrowsing = true
                     if (visible.isNotEmpty()) selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
                     true
                 }
                 android.view.KeyEvent.KEYCODE_DPAD_DOWN,
                 android.view.KeyEvent.KEYCODE_K.takeIf { quick } -> {
+                    keyboardBrowsing = true
                     if (visible.isNotEmpty()) selectedIndex = (selectedIndex + 1).coerceAtMost(visible.lastIndex)
                     true
                 }
                 android.view.KeyEvent.KEYCODE_DPAD_LEFT,
                 android.view.KeyEvent.KEYCODE_J.takeIf { quick } -> {
+                    keyboardBrowsing = true
                     val index = filters.indexOf(filter).coerceAtLeast(0)
                     filter = filters[(index - 1).coerceAtLeast(0)]
                     selectedIndex = 0
@@ -192,6 +203,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 }
                 android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
                 android.view.KeyEvent.KEYCODE_L.takeIf { quick } -> {
+                    keyboardBrowsing = true
                     val index = filters.indexOf(filter).coerceAtLeast(0)
                     filter = filters[(index + 1).coerceAtMost(filters.lastIndex)]
                     selectedIndex = 0
@@ -201,6 +213,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 android.view.KeyEvent.KEYCODE_O.takeIf { quick } -> {
                     visible.getOrNull(selectedIndex)?.let { item ->
                         if (item.replyAction != null) {
+                            markRead(item)
                             replyKey = item.key
                             replyText = ""
                             replyStatus = null
