@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -40,6 +42,8 @@ import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.AttachMoney
+import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -94,7 +98,7 @@ private data class HubPalette(
 )
 
 private enum class HubFilter(val label: String) {
-    All("all"), Messages("messages"), Calls("calls"), Email("email"), Apps("apps"), Flagged("flagged"), Summaries("summaries")
+    All("all"), Messages("messages"), Calls("calls"), Email("email"), Finance("finance"), Tasks("tasks"), Apps("apps"), Flagged("flagged"), Summaries("summaries")
 }
 
 @Composable
@@ -111,7 +115,9 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
     val readPrefs = remember { context.getSharedPreferences("hub_read", 0) }
     val categoryPrefs = remember { context.getSharedPreferences("hub_categories", 0) }
     var flaggedKeys by remember { mutableStateOf(flagPrefs.getStringSet("keys", emptySet())?.toSet().orEmpty()) }
-    var readKeys by remember { mutableStateOf(readPrefs.getStringSet("keys", emptySet())?.toSet().orEmpty()) }
+    var readTimes by remember {
+        mutableStateOf(readPrefs.all.mapNotNull { (key, value) -> (value as? Long)?.let { key to it } }.toMap())
+    }
     var categoryOverrides by remember {
         mutableStateOf(categoryPrefs.all.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }.toMap())
     }
@@ -124,34 +130,36 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
     val scope = rememberCoroutineScope()
     val notificationScroll = rememberScrollState()
     val allItems = HubRepository.items
-    val newCount = remember(allItems, readKeys) { allItems.count { it.key !in readKeys } }
+    val newCount = remember(allItems, readTimes) {
+        allItems.count { !it.isSummary && (readTimes[it.key] ?: 0L) < it.time }
+    }
     val visible = remember(allItems, filter, flaggedKeys, categoryOverrides) {
         allItems.filter { it.matches(filter, flaggedKeys, categoryOverrides) }
     }
-    val filters = HubFilter.entries.filter { it != HubFilter.Summaries || HubSettings.showSummaries.value }
+    val filters = HubFilter.entries.filter { entry ->
+        if (entry == HubFilter.All) true else when (HubSettings.visibility(entry.label)) {
+            HubTabVisibility.Always -> true
+            HubTabVisibility.Hidden -> false
+            HubTabVisibility.Auto -> allItems.any { it.matches(entry, flaggedKeys, categoryOverrides) }
+        }
+    }
 
     LaunchedEffect(visible.size, filter) {
         selectedIndex = selectedIndex.coerceIn(0, (visible.size - 1).coerceAtLeast(0))
     }
-    LaunchedEffect(selectedIndex) {
-        if (visible.isNotEmpty()) notificationScroll.animateScrollTo((selectedIndex * 92).coerceAtMost(notificationScroll.maxValue))
+    LaunchedEffect(filters) {
+        if (filter !in filters) filter = HubFilter.All
     }
-
     fun toggleFlag(key: String) {
         flaggedKeys = if (key in flaggedKeys) flaggedKeys - key else flaggedKeys + key
         flagPrefs.edit().putStringSet("keys", flaggedKeys).apply()
     }
-    fun markRead(key: String) {
-        readKeys = readKeys + key
-        readPrefs.edit().putStringSet("keys", readKeys).apply()
+    fun markRead(item: HubItem) {
+        readTimes = readTimes + (item.key to item.time)
+        readPrefs.edit().putLong(item.key, item.time).apply()
     }
-    fun markAllRead() {
-        readKeys = readKeys + allItems.map { it.key }
-        readPrefs.edit().putStringSet("keys", readKeys).apply()
-    }
-
     fun cycleCategory(packageName: String) {
-        val order = listOf("auto", "messages", "calls", "email", "apps")
+        val order = listOf("auto", "messages", "calls", "email", "finance", "tasks", "apps")
         val current = categoryOverrides[packageName] ?: "auto"
         val next = order[(order.indexOf(current) + 1) % order.size]
         categoryOverrides = if (next == "auto") categoryOverrides - packageName else categoryOverrides + (packageName to next)
@@ -197,13 +205,13 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                             replyText = ""
                             replyStatus = null
                         } else {
-                            activateHubItem(context, item, { markRead(item.key) }) { }
+                            activateHubItem(context, item, { markRead(item) }) { }
                         }
                     }
                     visible.isNotEmpty()
                 }
                 android.view.KeyEvent.KEYCODE_U.takeIf { quick } -> {
-                    visible.getOrNull(selectedIndex)?.let { HubRepository.dismiss(it.key) }
+                    visible.getOrNull(selectedIndex)?.let(HubRepository::dismiss)
                     visible.isNotEmpty()
                 }
                 else -> false
@@ -249,7 +257,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     )
                 }
                 Spacer(Modifier.size(8.dp))
-                Text("close →", color = palette.secondary, fontFamily = HubMono, fontSize = 12.sp, modifier = Modifier.clickable { markAllRead(); onDismiss() })
+                Text("close →", color = palette.secondary, fontFamily = HubMono, fontSize = 12.sp, modifier = Modifier.clickable { onDismiss() })
             }
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 14.dp, bottom = 16.dp),
@@ -281,13 +289,21 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 } else {
                     visible.take(50).forEachIndexed { index, item ->
                         key(item.key) {
+                            val bringIntoViewRequester = remember { BringIntoViewRequester() }
                             val dismissState = rememberSwipeToDismissBoxState()
+                            LaunchedEffect(index == selectedIndex) {
+                                if (index == selectedIndex) bringIntoViewRequester.bringIntoView()
+                            }
                             LaunchedEffect(dismissState.currentValue) {
                                 if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
-                                    HubRepository.dismiss(item.key)
+                                    HubRepository.dismiss(item)
                                 }
                             }
-                            Box(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 5.dp)) {
+                            Box(
+                                Modifier.fillMaxWidth()
+                                    .bringIntoViewRequester(bringIntoViewRequester)
+                                    .padding(horizontal = 6.dp, vertical = 5.dp),
+                            ) {
                             if (index == selectedIndex) {
                                 Box(
                                     Modifier.matchParentSize()
@@ -307,17 +323,18 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                             ) {
                                 HubNotificationCard(
                                     item = item,
+                                    effectiveCategory = item.effectiveCategory(categoryOverrides),
                                     palette = palette,
                                     selected = index == selectedIndex,
                                     flagged = item.key in flaggedKeys,
-                                    unread = item.key !in readKeys,
+                                    unread = !item.isSummary && (readTimes[item.key] ?: 0L) < item.time,
                                     replying = replyKey == item.key,
                                     replyText = replyText,
                                     replyStatus = replyStatus?.takeIf { it.first == item.key }?.second,
                                     onToggleFlag = { toggleFlag(item.key) },
-                                    onMarkRead = { markRead(item.key) },
+                                    onMarkRead = { markRead(item) },
                                     onToggleReply = {
-                                        markRead(item.key)
+                                        markRead(item)
                                         replyKey = if (replyKey == item.key) null else item.key
                                         replyText = ""
                                         replyStatus = null
@@ -336,6 +353,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                             }
                         }
                     }
+                    Spacer(Modifier.height(20.dp))
                 }
             }
         }
@@ -518,6 +536,7 @@ private fun HubAccessCard(palette: HubPalette, openSettings: () -> Unit) {
 @Composable
 private fun HubNotificationCard(
     item: HubItem,
+    effectiveCategory: String,
     palette: HubPalette,
     selected: Boolean,
     flagged: Boolean,
@@ -561,8 +580,8 @@ private fun HubNotificationCard(
     ) {
         Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                imageVector = item.hubIcon(),
-                contentDescription = item.effectiveCategory(emptyMap()),
+                imageVector = hubIcon(effectiveCategory),
+                contentDescription = effectiveCategory,
                 tint = if (item.isLowPriority()) palette.secondary else HubAccent,
                 modifier = Modifier.size(27.dp),
             )
@@ -681,14 +700,18 @@ private fun HubItem.matches(filter: HubFilter, flaggedKeys: Set<String>, overrid
     HubFilter.Messages -> !isSummary && effectiveCategory(overrides) == "messages"
     HubFilter.Calls -> !isSummary && effectiveCategory(overrides) == "calls"
     HubFilter.Email -> !isSummary && effectiveCategory(overrides) == "email"
+    HubFilter.Finance -> !isSummary && effectiveCategory(overrides) == "finance"
+    HubFilter.Tasks -> !isSummary && effectiveCategory(overrides) == "tasks"
     HubFilter.Apps -> !isSummary && effectiveCategory(overrides) == "apps"
     HubFilter.Flagged -> !isSummary && key in flaggedKeys
-    HubFilter.Summaries -> HubSettings.showSummaries.value && isSummary
+    HubFilter.Summaries -> isSummary
 }
 
 private fun HubItem.effectiveCategory(overrides: Map<String, String>): String {
     overrides[packageName]?.let { return it }
     return when {
+        isFinance() -> "finance"
+        isTask() -> "tasks"
         isMessage() -> "messages"
         isCall() -> "calls"
         isEmail() -> "email"
@@ -704,10 +727,22 @@ private fun HubItem.isCall(): Boolean = category == Notification.CATEGORY_CALL |
 private fun HubItem.isEmail(): Boolean = category == Notification.CATEGORY_EMAIL ||
     listOf("gmail", "email", "outlook", "protonmail", "fairmail", "k9", "yahoo").any { packageName.contains(it, true) }
 
-private fun HubItem.hubIcon(): ImageVector = when {
-    isCall() -> Icons.Outlined.Call
-    isEmail() -> Icons.Outlined.Email
-    isMessage() -> Icons.Outlined.ChatBubbleOutline
+private fun HubItem.isFinance(): Boolean = listOf(
+    "paypal", "afterpay", "klarna", "commbank", "westpac", "nab.", "anz.", "up.money",
+    "revolut", "wise", "bank", "stripe", "squareup", "coinbase", "binance",
+).any { packageName.contains(it, true) }
+
+private fun HubItem.isTask(): Boolean = listOf(
+    "todoist", "ticktick", "tasks", "taskito", "anydo", "rememberthemilk", "microsoft.todos",
+).any { packageName.contains(it, true) } ||
+    category == Notification.CATEGORY_REMINDER && listOf("todo", "task", "reminder").any { packageName.contains(it, true) }
+
+private fun hubIcon(category: String): ImageVector = when (category) {
+    "calls" -> Icons.Outlined.Call
+    "email" -> Icons.Outlined.Email
+    "messages" -> Icons.Outlined.ChatBubbleOutline
+    "finance" -> Icons.Outlined.AttachMoney
+    "tasks" -> Icons.Outlined.CheckBox
     else -> Icons.Outlined.NotificationsNone
 }
 

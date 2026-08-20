@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -177,8 +178,10 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var soundVolume by remember { mutableStateOf(SoundSettings.volume.value) }
     var homeTyping by remember { mutableStateOf(HomeTypingSettings.enabled.value) }
     var openSingleAppResult by remember { mutableStateOf(AppSearchSettings.openSingleResult.value) }
+    var webFallback by remember { mutableStateOf(AppSearchSettings.webFallback.value) }
+    var aliasSuggestions by remember { mutableStateOf(AppSearchSettings.aliasSuggestions.value) }
     var holdFirstForAlt by remember { mutableStateOf(HomeTypingSettings.holdFirstForAlt.value) }
-    var showHubSummaries by remember { mutableStateOf(HubSettings.showSummaries.value) }
+    var hubTabModes by remember { mutableStateOf(HubSettings.tabVisibility.value) }
     var quickHubNavigation by remember { mutableStateOf(HubSettings.quickKeyboardNavigation.value) }
     var geminiKey by remember { mutableStateOf(GeminiSettings.apiKey(activity)) }
     var directSms by remember { mutableStateOf(SmsSettings.directEnabled(activity)) }
@@ -304,7 +307,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         }
         Text("Photos are cached only when Messenger notifications arrive", color = Color(0xFF99958E), fontSize = 11.sp)
         Spacer(Modifier.height(26.dp))
-        Text("todoist", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text("hub & command bar", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -330,17 +333,35 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Spacer(Modifier.height(24.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text("Show notification summaries", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Adds a summaries tab for aggregate rows such as ‘57 messages from 3 chats’", color = Color(0xFF99958E), fontSize = 12.sp)
+        Text("Hub tabs", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text("Tap a tab to cycle between auto, always and hidden. All is always shown.", color = Color(0xFF99958E), fontSize = 12.sp)
+        Spacer(Modifier.height(10.dp))
+        listOf(
+            "messages" to "Messages",
+            "calls" to "Calls",
+            "email" to "Email",
+            "finance" to "Finance",
+            "tasks" to "Tasks",
+            "apps" to "Apps",
+            "flagged" to "Flagged",
+            "summaries" to "Summaries",
+        ).forEach { (id, label) ->
+            val mode = hubTabModes[id] ?: HubTabVisibility.Auto
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        val next = mode.next()
+                        HubSettings.saveTabVisibility(activity, id, next)
+                        hubTabModes = hubTabModes + (id to next)
+                    }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(label, color = Color(0xFFF4F1E9), fontSize = 14.sp, modifier = Modifier.weight(1f))
+                Text(mode.label, color = if (mode == HubTabVisibility.Hidden) Color(0xFF77736D) else accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
-            Switch(
-                checked = showHubSummaries,
-                onCheckedChange = { showHubSummaries = it; HubSettings.saveShowSummaries(activity, it) },
-                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
-            )
         }
+        Text("Hidden summaries remain in Android's notification shade.", color = Color(0xFF99958E), fontSize = 11.sp)
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -359,6 +380,21 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Text("When enabled, also turn on ‘Commander home typing’ in Accessibility.", color = Color(0xFF99958E), fontSize = 11.sp)
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Fall back to web search", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("When no app matches, show one web-search action. No live web suggestions are loaded.", color = Color(0xFF99958E), fontSize = 12.sp)
+            }
+            Switch(
+                checked = webFallback,
+                onCheckedChange = {
+                    webFallback = it
+                    AppSearchSettings.saveWebFallback(activity, it)
+                },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
         Text(
             "Open Command app info  →",
             color = accent,
@@ -413,6 +449,8 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )
         }
+        Spacer(Modifier.height(26.dp))
+        Text("todoist", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -599,7 +637,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             }
         }
         Spacer(Modifier.height(28.dp))
-        Text("file search", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text("files & folders", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
         Text("File-search trigger", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Text("Type one character, or use ‘space’. Default: space", color = Color(0xFF99958E), fontSize = 12.sp)
@@ -657,7 +695,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             }
         }
         Spacer(Modifier.height(28.dp))
-        Text("actions", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text("shortcuts & automations", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
         Text("App shortcut search alias", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Text("Search shortcuts declared by installed apps. Default: !as", color = Color(0xFF99958E), fontSize = 12.sp)
@@ -723,6 +761,21 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             Switch(
                 checked = swapDotBang,
                 onCheckedChange = { swapDotBang = it; saved = false },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Show alias suggestions", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Show configured aliases when you type their shared trigger", color = Color(0xFF99958E), fontSize = 12.sp)
+            }
+            Switch(
+                checked = aliasSuggestions,
+                onCheckedChange = {
+                    aliasSuggestions = it
+                    AppSearchSettings.saveAliasSuggestions(activity, it)
+                },
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )
         }

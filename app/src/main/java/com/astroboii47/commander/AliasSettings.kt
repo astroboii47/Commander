@@ -21,6 +21,14 @@ data class AliasMatch(
     val isDirections: Boolean = false,
 )
 
+data class AliasSuggestion(
+    val alias: String,
+    val label: String,
+    val subtitle: String,
+    val packageName: String? = null,
+    val taskerAlias: TaskerAlias? = null,
+)
+
 object AliasSettings {
     val targets = listOf(
         SearchTarget("play", "Play Store", "com.android.vending", "https://play.google.com/store/search?q=%s&c=apps"),
@@ -38,10 +46,12 @@ object AliasSettings {
         SearchTarget("focus", "Firefox Focus", "org.mozilla.focus", "https://www.google.com/search?q=%s"),
         SearchTarget("arc", "Arc Search", "company.thebrowser.arc", "https://www.google.com/search?q=%s"),
         SearchTarget("amazon", "Amazon Australia", "com.amazon.mShop.android.shopping", "https://www.amazon.com.au/s?k=%s"),
+        SearchTarget("settings", "Android Settings", "com.android.settings", ""),
     )
 
     private fun prefs(context: Context) = context.getSharedPreferences("command_aliases", Context.MODE_PRIVATE)
-    fun alias(context: Context, target: SearchTarget): String = prefs(context).getString(target.id, "").orEmpty()
+    fun alias(context: Context, target: SearchTarget): String = prefs(context)
+        .getString(target.id, if (target.id == "settings") ".set" else "").orEmpty()
     fun save(context: Context, target: SearchTarget, alias: String) {
         prefs(context).edit().putString(target.id, aliases(alias).joinToString(", ")).apply()
     }
@@ -69,6 +79,33 @@ object AliasSettings {
     }
     fun usesPrefix(context: Context, prefix: Char): Boolean = targets.any { target ->
         aliases(alias(context, target)).any { TriggerSettings.effectiveAlias(it).startsWith(prefix) }
+    }
+    fun suggestions(context: Context, input: String): List<AliasSuggestion> {
+        if (!AppSearchSettings.aliasSuggestions.value || input.isBlank() || input.contains(' ')) return emptyList()
+        val typed = normalize(input)
+        if (typed.isBlank()) return emptyList()
+        val searches = targets.flatMap { target ->
+            aliases(alias(context, target)).map { TriggerSettings.effectiveAlias(it) }
+                .filter { it.startsWith(typed) }
+                .map {
+                    val packageName = if (target.id == "settings") {
+                        android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
+                            .resolveActivity(context.packageManager)?.packageName
+                    } else target.packageName
+                    AliasSuggestion(it, target.label, if (target.id == "settings") "search system settings" else "search alias", packageName)
+                }
+        }
+        val shortcutAlias = TriggerSettings.effectiveAlias(AppShortcutSettings.alias(context))
+        val shortcuts = if (shortcutAlias.startsWith(typed)) {
+            listOf(AliasSuggestion(shortcutAlias, "App shortcuts", "search app shortcuts", context.packageName))
+        } else emptyList()
+        val tasks = TaskerAliases.load(context).mapNotNull { task ->
+            val effective = TriggerSettings.effectiveAlias(task.alias.lowercase())
+            effective.takeIf { it.startsWith(typed) }
+                ?.let { AliasSuggestion(it, task.label, "Tasker · ${task.taskName}", TaskerAliases.TASKER_PACKAGE, task) }
+        }
+        return (searches + shortcuts + tasks).distinctBy { "${it.alias}:${it.label}" }
+            .sortedWith(compareBy<AliasSuggestion> { it.alias.length }.thenBy { it.label })
     }
     private fun aliases(value: String): List<String> = value.split(',')
         .map(::normalize)

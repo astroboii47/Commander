@@ -31,7 +31,7 @@ object AppShortcutSettings {
         AppShortcutCatalog.clear()
     }
     fun query(context: Context, input: String): String? {
-        val alias = alias(context)
+        val alias = TriggerSettings.effectiveAlias(alias(context))
         val normalized = input.trimStart()
         return when {
             normalized.equals(alias, true) -> ""

@@ -20,6 +20,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +42,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -182,15 +185,25 @@ fun CommandOverlayApp(
         else FileSearchQuery(parsed.text, FileSearchMode.Default)
     }
     val aliasMatch = remember(query) { engine.matchAlias(query) }
-    val shortcutQuery = remember(query) { AppShortcutSettings.query(engine.context, query) }
-    val taskerResults = remember(query, maxVisibleResults) { TaskerAliases.matches(engine.context, query).take(maxVisibleResults) }
+    val settingsResults = remember(aliasMatch) {
+        if (aliasMatch?.target?.id == "settings") engine.searchSystemSettings(aliasMatch.query) else emptyList()
+    }
+    val aliasSuggestions = remember(query, AppSearchSettings.aliasSuggestions.value) {
+        AliasSettings.suggestions(engine.context, query)
+    }
+    val shortcutQuery = remember(query, aliasSuggestions) {
+        if (aliasSuggestions.isEmpty()) AppShortcutSettings.query(engine.context, query) else null
+    }
+    val taskerResults = remember(query, maxVisibleResults, aliasSuggestions) {
+        if (aliasSuggestions.isEmpty()) TaskerAliases.matches(engine.context, query).take(maxVisibleResults) else emptyList()
+    }
     val calculatorResult = remember(parsed.kind, parsed.text) {
         if (parsed.kind == CommandKind.Calculator) engine.calculatorPreview(parsed.text) else null
     }
     val inGeminiConversation = askMessages.isNotEmpty()
     val activeKind = if (inGeminiConversation) CommandKind.Ask else selectedContactKind ?: parsed.kind
     val baseApps = remember(query, activeKind, aliasMatch, maxVisibleResults) {
-        if (activeKind == CommandKind.Apps && aliasMatch == null) engine.searchApps(parsed.text, maxVisibleResults) else emptyList()
+        if (activeKind == CommandKind.Apps && aliasMatch == null && aliasSuggestions.isEmpty()) engine.searchApps(parsed.text, maxVisibleResults) else emptyList()
     }
     var apps by remember { mutableStateOf<List<AppResult>>(emptyList()) }
     var rawFiles by remember { mutableStateOf<List<FileResult>>(emptyList()) }
@@ -213,6 +226,8 @@ fun CommandOverlayApp(
         } else emptyList()
     }
     val actionReady = when {
+        aliasSuggestions.isNotEmpty() -> true
+        aliasMatch?.target?.id == "settings" -> settingsResults.isNotEmpty()
         shortcutQuery != null -> shortcutResults.isNotEmpty()
         taskerResults.isNotEmpty() -> true
         else -> when (activeKind) {
@@ -307,7 +322,8 @@ fun CommandOverlayApp(
         val app = baseApps.singleOrNull()
         val eligible = AppSearchSettings.openSingleResult.value &&
             query.isNotBlank() && activeKind == CommandKind.Apps && aliasMatch == null &&
-            shortcutQuery == null && taskerResults.isEmpty() && app != null
+            shortcutQuery == null && taskerResults.isEmpty() && app != null &&
+            !app.packageName.startsWith("internal:web-search:")
         if (!eligible) {
             automaticallyOpenedAppKey = null
             return@LaunchedEffect
@@ -324,8 +340,10 @@ fun CommandOverlayApp(
             onDismiss()
         } else notice = error
     }
-    LaunchedEffect(aliasMatch?.target?.packageName) {
-        aliasIcon = aliasMatch?.target?.packageName?.let { packageName ->
+    LaunchedEffect(aliasMatch?.target?.id, aliasMatch?.target?.packageName) {
+        aliasIcon = if (aliasMatch?.target?.id == "settings") {
+            withContext(Dispatchers.IO) { engine.loadSystemSettingsIcon() }
+        } else aliasMatch?.target?.packageName?.let { packageName ->
             withContext(Dispatchers.IO) { engine.loadPackageIcon(packageName) }
         }
     }
@@ -347,6 +365,28 @@ fun CommandOverlayApp(
 
     fun execute() {
         if (executing) return
+        if (aliasSuggestions.isNotEmpty()) {
+            aliasSuggestions.getOrNull(selectedIndex.coerceIn(0, aliasSuggestions.lastIndex))?.let { suggestion ->
+                SoundFeedback.play(engine.context, CommandSound.Step)
+                setEditorQuery("${suggestion.alias} ")
+                selectedIndex = 0
+                notice = null
+            }
+            return
+        }
+        if (aliasMatch?.target?.id == "settings") {
+            settingsResults.getOrNull(selectedIndex.coerceIn(0, settingsResults.lastIndex.coerceAtLeast(0)))?.let { result ->
+                executing = true
+                scope.launch {
+                    delay(90)
+                    val error = engine.openSystemSetting(result)
+                    executing = false
+                    playOutcome(error)
+                    if (error != null) notice = error
+                }
+            }
+            return
+        }
         if (shortcutQuery != null) {
             shortcutResults.getOrNull(selectedIndex.coerceIn(0, shortcutResults.lastIndex.coerceAtLeast(0)))?.let { shortcut ->
                 executing = true
@@ -620,6 +660,28 @@ fun CommandOverlayApp(
             } else {
             when {
                 notice != null -> OverlayNotice(notice!!, palette)
+                aliasSuggestions.isNotEmpty() -> OverlayAliasSuggestions(aliasSuggestions, selectedIndex, maxVisibleResults, palette) { suggestion ->
+                    SoundFeedback.play(engine.context, CommandSound.Step)
+                    setEditorQuery("${suggestion.alias} ")
+                    selectedIndex = 0
+                    notice = null
+                }
+                aliasMatch?.target?.id == "settings" -> OverlaySettingsResults(
+                    settingsResults,
+                    selectedIndex,
+                    maxVisibleResults,
+                    aliasIcon,
+                    palette,
+                ) { result ->
+                    executing = true
+                    scope.launch {
+                        delay(90)
+                        val error = engine.openSystemSetting(result)
+                        executing = false
+                        playOutcome(error)
+                        if (error != null) notice = error
+                    }
+                }
                 aliasMatch != null -> OverlayAliasPreview(aliasMatch, aliasIcon, palette, ::execute)
                 activeKind == CommandKind.Calculator && calculatorResult != null -> OverlayCalculatorResult(calculatorResult, palette, ::execute)
                 shortcutQuery != null -> OverlayShortcutResults(shortcutResults, selectedIndex, palette) { shortcut ->
@@ -644,16 +706,27 @@ fun CommandOverlayApp(
                         notice = error ?: "task started · ${task.label}"
                     }
                 }
-                activeKind == CommandKind.Apps && query.isNotBlank() -> OverlayAppResults(apps, selectedIndex, palette) { app ->
-                    executing = true
-                    scope.launch {
-                        delay(135)
-                        val error = engine.execute(ParsedCommand(CommandKind.Apps, app.label), app)
-                        executing = false
-                        playOutcome(error)
-                        if (error != null) notice = error
-                    }
-                }
+                activeKind == CommandKind.Apps && query.isNotBlank() -> OverlayAppResults(
+                    apps = apps,
+                    selectedIndex = selectedIndex,
+                    palette = palette,
+                    onClick = { app ->
+                        executing = true
+                        scope.launch {
+                            delay(135)
+                            val error = engine.execute(ParsedCommand(CommandKind.Apps, app.label), app)
+                            executing = false
+                            playOutcome(error)
+                            if (error != null) notice = error
+                        }
+                    },
+                    onLongClick = { app ->
+                        if (engine.openAppInfo(app)) {
+                            SoundFeedback.play(engine.context, CommandSound.Step)
+                            onDismiss()
+                        }
+                    },
+                )
                 activeKind == CommandKind.Files && !hasFileAccess -> OverlayFileAccess(palette) { engine.openFileSearchAccess() }
                 activeKind == CommandKind.Files && parsed.text.isNotBlank() -> OverlayFileResults(files, selectedIndex, palette, fileSortMode) { file ->
                     executing = true
@@ -727,6 +800,7 @@ fun CommandOverlayApp(
                         text = "▸ ${when {
                             shortcutQuery != null -> "search app shortcuts"
                             taskerResults.isNotEmpty() -> "run Tasker task"
+                            activeKind == CommandKind.Apps && apps.getOrNull(selectedIndex)?.packageName?.startsWith("internal:web-search:") == true -> "search web"
                             activeKind == CommandKind.Ask && query.startsWith("??") -> "ask ChatGPT"
                             else -> overlayActionLabel(activeKind)
                         }}",
@@ -874,6 +948,8 @@ fun CommandOverlayApp(
                                     val native = event.nativeKeyEvent
                                     val isBackspace = event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DEL
                                     val resultCount = when {
+                                        aliasSuggestions.isNotEmpty() -> aliasSuggestions.size
+                                        aliasMatch?.target?.id == "settings" -> settingsResults.size
                                         shortcutQuery != null -> shortcutResults.size
                                         taskerResults.isNotEmpty() -> taskerResults.size
                                         aliasMatch != null -> 1
@@ -1213,7 +1289,13 @@ private fun OverlayCompletion(text: String, palette: OverlayPalette, focusReques
 }
 
 @Composable
-private fun OverlayAppResults(apps: List<AppResult>, selectedIndex: Int, palette: OverlayPalette, onClick: (AppResult) -> Unit) {
+private fun OverlayAppResults(
+    apps: List<AppResult>,
+    selectedIndex: Int,
+    palette: OverlayPalette,
+    onClick: (AppResult) -> Unit,
+    onLongClick: (AppResult) -> Unit,
+) {
     if (apps.isEmpty()) {
         OverlayNotice("no apps found", palette)
         return
@@ -1233,7 +1315,7 @@ private fun OverlayAppResults(apps: List<AppResult>, selectedIndex: Int, palette
         apps.forEachIndexed { index, app ->
             if (index > 0) Spacer(Modifier.height(8.dp))
             if (animationMode == ListAnimationMode.Off) {
-                OverlayAppResultRow(app, index == selectedIndex, palette, onClick)
+                OverlayAppResultRow(app, index == selectedIndex, palette, onClick, onLongClick)
             } else {
                 AnimatedContent(
                     targetState = app,
@@ -1246,7 +1328,7 @@ private fun OverlayAppResults(apps: List<AppResult>, selectedIndex: Int, palette
                     },
                     label = "appResultSlot$index",
                 ) { shownApp ->
-                    OverlayAppResultRow(shownApp, index == selectedIndex, palette, onClick)
+                    OverlayAppResultRow(shownApp, index == selectedIndex, palette, onClick, onLongClick)
                 }
             }
         }
@@ -1254,7 +1336,13 @@ private fun OverlayAppResults(apps: List<AppResult>, selectedIndex: Int, palette
 }
 
 @Composable
-private fun OverlayAppResultRow(app: AppResult, selected: Boolean, palette: OverlayPalette, onClick: (AppResult) -> Unit) {
+private fun OverlayAppResultRow(
+    app: AppResult,
+    selected: Boolean,
+    palette: OverlayPalette,
+    onClick: (AppResult) -> Unit,
+    onLongClick: (AppResult) -> Unit,
+) {
     val glowMode = AppearanceSettings.appGlowMode.value
     val appColor = app.adaptiveColor?.let { Color(it) } ?: OverlayAccent
     val visualMode = if (glowMode == AppGlowMode.Off) AppGlowMode.Reduced else glowMode
@@ -1297,7 +1385,10 @@ private fun OverlayAppResultRow(app: AppResult, selected: Boolean, palette: Over
             Modifier.fillMaxWidth().clip(shape).background(palette.tile)
                 .then(if (selected && visualMode != AppGlowMode.Outline) Modifier.background(selectedBrush) else Modifier)
                 .border(if (selected && visualMode == AppGlowMode.Outline) 2.dp else 1.dp, if (selected) selectionColor else palette.border, shape)
-                .clickable { onClick(app) }.padding(12.dp),
+                .combinedClickable(
+                    onClick = { onClick(app) },
+                    onLongClick = { if (!app.packageName.startsWith("internal:")) onLongClick(app) },
+                ).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             RealAppIcon(app.icon, app.label, palette, Modifier.size(42.dp))
@@ -1334,6 +1425,102 @@ private fun OverlayShortcutResults(
             }
             if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
         }
+    }
+}
+
+@Composable
+private fun OverlaySettingsResults(
+    results: List<SystemSettingResult>,
+    selectedIndex: Int,
+    visibleRowCount: Int,
+    settingsIcon: Drawable?,
+    palette: OverlayPalette,
+    onClick: (SystemSettingResult) -> Unit,
+) {
+    if (results.isEmpty()) {
+        OverlayNotice("no matching settings", palette)
+        return
+    }
+    val scrollState = rememberScrollState()
+    Column(
+        Modifier.fillMaxWidth()
+            .heightIn(max = (visibleRowCount * 66 + (visibleRowCount - 1).coerceAtLeast(0) * 8).dp)
+            .verticalScroll(scrollState),
+    ) {
+        results.forEachIndexed { index, result ->
+            if (index > 0) Spacer(Modifier.height(8.dp))
+            val bringIntoViewRequester = remember { BringIntoViewRequester() }
+            LaunchedEffect(index == selectedIndex) {
+                if (index == selectedIndex) bringIntoViewRequester.bringIntoView()
+            }
+            Row(
+                Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(if (index == selectedIndex) OverlayAccent.copy(alpha = .22f) else palette.tile)
+                    .border(1.dp, if (index == selectedIndex) OverlayAccent else palette.border, RoundedCornerShape(15.dp))
+                    .clickable { onClick(result) }.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RealAppIcon(settingsIcon, "Settings", palette, Modifier.size(42.dp))
+                Column(Modifier.padding(start = 13.dp).weight(1f)) {
+                    Text(result.label, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text(result.subtitle, color = palette.secondary, fontFamily = OverlayMono, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverlayAliasSuggestions(
+    suggestions: List<AliasSuggestion>,
+    selectedIndex: Int,
+    visibleRowCount: Int,
+    palette: OverlayPalette,
+    onClick: (AliasSuggestion) -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scrollState = rememberScrollState()
+    Column(
+        Modifier.fillMaxWidth()
+            .heightIn(max = (visibleRowCount * 66 + (visibleRowCount - 1).coerceAtLeast(0) * 8).dp)
+            .verticalScroll(scrollState),
+    ) {
+    suggestions.forEachIndexed { index, suggestion ->
+        if (index > 0) Spacer(Modifier.height(8.dp))
+        val bringIntoViewRequester = remember { BringIntoViewRequester() }
+        LaunchedEffect(index == selectedIndex) {
+            if (index == selectedIndex) bringIntoViewRequester.bringIntoView()
+        }
+        val icon = remember(suggestion.packageName, suggestion.taskerAlias?.iconBase64) {
+            suggestion.taskerAlias?.let { TaskerAliases.icon(context, it) }
+                ?: suggestion.packageName?.let { packageName ->
+                    runCatching { context.packageManager.getApplicationIcon(packageName) }.getOrNull()
+                }
+        }
+        Row(
+            Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester).clip(RoundedCornerShape(15.dp))
+                .background(if (index == selectedIndex) OverlayAccent.copy(alpha = .22f) else palette.tile)
+                .border(1.dp, if (index == selectedIndex) OverlayAccent else palette.border, RoundedCornerShape(15.dp))
+                .clickable { onClick(suggestion) }.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RealAppIcon(icon, suggestion.label, palette, Modifier.size(42.dp))
+            Column(Modifier.padding(start = 13.dp).weight(1f)) {
+                Text(suggestion.label, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(
+                    "${suggestion.alias}  ·  ${suggestion.subtitle}",
+                    color = OverlayAccent,
+                    fontFamily = OverlayMono,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+        }
+    }
     }
 }
 

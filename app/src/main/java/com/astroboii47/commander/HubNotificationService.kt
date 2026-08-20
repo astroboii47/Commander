@@ -40,6 +40,7 @@ object HubRepository {
         private set
     private var dismissNotification: ((String) -> Unit)? = null
     private val sentReplies = mutableMapOf<String, MutableList<HubMessage>>()
+    private val hiddenSummaryKeys = mutableSetOf<String>()
 
     fun attachDismissHandler(handler: ((String) -> Unit)?) {
         dismissNotification = handler
@@ -49,6 +50,18 @@ object HubRepository {
         items = items.filterNot { it.key == key }
         sentReplies.remove(key)
         dismissNotification?.invoke(key)
+    }
+
+    fun dismiss(item: HubItem) {
+        if (item.isSummary) {
+            // Cancelling an Android group summary commonly cancels every child
+            // notification too. Hide only Commander's aggregate row so the
+            // individual notifications remain intact and actionable.
+            hiddenSummaryKeys += item.key
+            items = items.filterNot { it.key == item.key }
+        } else {
+            dismiss(item.key)
+        }
     }
 
     fun recordSentReply(key: String, text: String) {
@@ -65,6 +78,7 @@ object HubRepository {
             .filter { !it.isOngoing }
             .onEach { it.discoverMessengerConversation(service) }
             .mapNotNull { it.toHubItem(service) }
+            .filterNot { it.isSummary && it.key in hiddenSummaryKeys }
             .map { item -> item.copy(messages = item.messages + sentReplies[item.key].orEmpty()) }
             .sortedByDescending { it.time }
             .toList()
@@ -78,7 +92,7 @@ object HubRepository {
         notification.discoverMessengerConversation(service)
         val converted = notification.toHubItem(service)?.let { item ->
             item.copy(messages = item.messages + sentReplies[item.key].orEmpty())
-        }
+        }?.takeUnless { it.isSummary && it.key in hiddenSummaryKeys }
         items = if (converted == null) {
             items.filterNot { it.key == notification.key }
         } else {
@@ -89,6 +103,7 @@ object HubRepository {
     fun remove(key: String) {
         items = items.filterNot { it.key == key }
         sentReplies.remove(key)
+        hiddenSummaryKeys.remove(key)
     }
 }
 
@@ -147,6 +162,10 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
         }.getOrDefault(packageName.substringAfterLast('.'))
     }
     val messages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) runCatching {
+        val selfDisplayName = extras.getCharSequence("android.selfDisplayName")?.toString()?.trim()
+        val messagingUser = extras.getParcelable<android.app.Person>("android.messagingUser")
+            ?.name?.toString()?.trim()
+        val selfNames = setOfNotNull(selfDisplayName, messagingUser).filter(String::isNotBlank)
         Notification.MessagingStyle.Message
             .getMessagesFromBundleArray(extras.getParcelableArray(Notification.EXTRA_MESSAGES))
             .mapNotNull { message ->
@@ -160,11 +179,23 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
                 val body = if (senderIsPlaceholder && embeddedSender != null && prefixed != null) {
                     rawBody.substring(prefixed.range.last + 1).trimStart()
                 } else rawBody
-                // Notification histories are incoming data. Apps disagree on
-                // MessagingStyle user identity, so never infer outgoing here.
-                HubMessage(body, sender, false)
+                // MessagingStyle uses the app's configured user identity for
+                // outgoing history. Exact self-name matches are reliable, and
+                // a missing sender is treated as outgoing only when the app
+                // supplied an explicit self identity.
+                val outgoing = selfNames.any { it.equals(rawSender, true) } ||
+                    (rawSender == null && selfNames.isNotEmpty())
+                HubMessage(body, if (outgoing) null else sender, outgoing)
             }
     }.getOrDefault(emptyList()) else emptyList()
+    val hasSummaryFlag = notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
+    val isAggregateSummary = hasSummaryFlag && (
+        notification.flags and FLAG_AUTOGROUP_SUMMARY != 0 ||
+            !extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT).isNullOrBlank() ||
+            extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES).orEmpty().size > 1 ||
+            AGGREGATE_SUMMARY_TEXT.containsMatchIn(title) ||
+            AGGREGATE_SUMMARY_TEXT.containsMatchIn(text)
+        )
     return HubItem(
         key = key,
         packageName = packageName,
@@ -185,11 +216,21 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
             val inputList: List<RemoteInput> = action.remoteInputs?.filter { it.allowFreeFormInput }.orEmpty()
             if (inputList.isEmpty()) null else HubReplyAction(action.actionIntent, inputList.toTypedArray())
         },
-        isSummary = notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
+        // Some apps, including Shopify, promote the newest ordinary
+        // notification to Android's group header and set GROUP_SUMMARY on it.
+        // Keep those useful rows in their normal category. The summaries tab
+        // is reserved for rows whose content is actually aggregate.
+        isSummary = isAggregateSummary,
     )
 }
 
 private val GROUP_SENDER_PREFIX = Regex("^[~～]?\\s*([^:\\n]{1,60}):\\s+")
+private const val FLAG_AUTOGROUP_SUMMARY = 0x400
+private val AGGREGATE_SUMMARY_TEXT = Regex(
+    "\\b\\d+\\s+(?:new\\s+)?(?:messages?|notifications?|emails?|conversations?|chats?|orders?|reminders?)\\b|" +
+        "\\b(?:messages?|notifications?|emails?|conversations?|chats?|orders?|reminders?)\\s+from\\s+\\d+\\b",
+    RegexOption.IGNORE_CASE,
+)
 private fun String.cleanHubSender(): String = trim().trimStart('~', '～', '\u202f', '\u00a0').trim()
 
 fun HubItem.sendReply(context: android.content.Context, text: String): Boolean {

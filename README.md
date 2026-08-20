@@ -27,6 +27,8 @@ Commander puts common Android actions behind one searchable overlay. Open the ba
 - Start timers, calculate expressions, and convert common units.
 - Search contacts for calls and messages.
 - Open configurable searches in Maps, YouTube, Spotify, Reddit, Play Store, and other apps.
+- Search common Android Settings destinations through a configurable alias.
+- Discover configured search and Tasker aliases directly inside the command bar.
 - Run selected Tasker tasks.
 - Ask Gemini in the overlay or continue a query in ChatGPT.
 - Read, filter, dismiss, open, and reply to supported notifications in Commander Hub.
@@ -132,7 +134,7 @@ The note and file triggers are configurable. Search aliases can also be assigned
 
 ## Commander Hub
 
-Commander Hub uses Android’s notification-listener interface to collect active notifications into one keyboard-friendly view. It supports category filters, unread highlighting, dismissing notifications, opening their original destination, and inline replies when the originating app exposes an Android direct-reply action.
+Commander Hub uses Android’s notification-listener interface to collect active notifications into one keyboard-friendly view. It supports configurable category tabs, unread highlighting, dismissing notifications, opening their original destination, and inline replies when the originating app exposes an Android direct-reply action. Optional tabs can be shown automatically, kept visible, or hidden.
 
 Reply support is determined by the notification. Some apps or notification types do not provide a reply action, and grouped notifications may expose only a summary.
 

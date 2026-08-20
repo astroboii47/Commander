@@ -51,6 +51,18 @@ class CommandEngine(private val activity: Activity) {
         ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), 4302)
     }
 
+    fun openAppInfo(app: AppResult): Boolean {
+        if (app.packageName.startsWith("internal:")) return false
+        return runCatching {
+            activity.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${app.packageName}")
+                },
+            )
+            true
+        }.getOrDefault(false)
+    }
+
     fun hasGeminiKey(): Boolean = GeminiSettings.apiKey(activity).isNotBlank()
 
     suspend fun askGemini(history: List<AskMessage>): Result<String> =
@@ -69,18 +81,21 @@ class CommandEngine(private val activity: Activity) {
                 add(AppResult("Commander Settings", INTERNAL_SETTINGS, null))
             }
         }
-        return (destinations + AppCatalog.search(activity.applicationContext, query, limit).map {
+        val matches = (destinations + AppCatalog.search(activity.applicationContext, query, limit).map {
             AppResult(label = it.label, packageName = it.packageName, icon = null)
         }).distinctBy { it.packageName }.take(limit)
+        return if (matches.isEmpty() && needle.isNotBlank() && AppSearchSettings.webFallback.value) {
+            listOf(AppResult("Search web for “${query.trim()}”", INTERNAL_WEB + Uri.encode(query.trim()), null))
+        } else matches
     }
 
     fun loadVisibleAppIcons(apps: List<AppResult>): List<AppResult> {
         return apps.map { app ->
             val icon = when (app.packageName) {
                 INTERNAL_HOME -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_home)
-                INTERNAL_SETTINGS -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_bar)
-                INTERNAL_HUB -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_hub)
-                else -> AppIconOverrides.load(activity, app.packageName)
+            INTERNAL_SETTINGS -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_bar)
+            INTERNAL_HUB -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_hub)
+            else -> if (app.packageName.startsWith(INTERNAL_WEB)) null else AppIconOverrides.load(activity, app.packageName)
                     ?: runCatching { packageManager.getApplicationIcon(app.packageName) }.getOrNull()
             }
             app.copy(icon = icon, adaptiveColor = icon?.let(::extractIconColor))
@@ -89,6 +104,12 @@ class CommandEngine(private val activity: Activity) {
 
     fun loadPackageIcon(packageName: String) =
         runCatching { packageManager.getApplicationIcon(packageName) }.getOrNull()
+
+    fun loadSystemSettingsIcon() = runCatching {
+        val packageName = Intent(Settings.ACTION_SETTINGS).resolveActivity(packageManager)?.packageName
+            ?: return@runCatching null
+        packageManager.getApplicationIcon(packageName)
+    }.getOrNull()
 
     private fun extractIconColor(drawable: android.graphics.drawable.Drawable): Int {
         val bitmap = drawable.toBitmap(32, 32)
@@ -295,6 +316,14 @@ class CommandEngine(private val activity: Activity) {
     }
 
     fun matchAlias(input: String): AliasMatch? = AliasSettings.match(activity, input)
+
+    fun searchSystemSettings(query: String): List<SystemSettingResult> = SystemSettingsCatalog.search(query)
+
+    fun openSystemSetting(result: SystemSettingResult): String? = startOrFallback(
+        Intent(result.action),
+        Intent(Settings.ACTION_SETTINGS),
+        "Settings could not be opened",
+    )
 
     fun calculatorPreview(text: String): String? = UnitConverter.convert(text) ?: evaluateCalculation(text)?.second
 
@@ -576,7 +605,9 @@ class CommandEngine(private val activity: Activity) {
             INTERNAL_HUB -> internalDestination(HubActivity::class.java)
             INTERNAL_HOME -> internalDestination(MainActivity::class.java)
             INTERNAL_SETTINGS -> internalDestination(SettingsActivity::class.java)
-            else -> packageManager.getLaunchIntentForPackage(app.packageName) ?: return "App cannot be opened"
+            else -> if (app.packageName.startsWith(INTERNAL_WEB)) {
+                return searchWeb(Uri.decode(app.packageName.removePrefix(INTERNAL_WEB)))
+            } else packageManager.getLaunchIntentForPackage(app.packageName) ?: return "App cannot be opened"
         }
         activity.startActivity(intent)
         activity.finish()
@@ -592,6 +623,7 @@ class CommandEngine(private val activity: Activity) {
         const val INTERNAL_HUB = "internal:minimal-hub"
         const val INTERNAL_HOME = "internal:command-home"
         const val INTERNAL_SETTINGS = "internal:command-settings"
+        const val INTERNAL_WEB = "internal:web-search:"
     }
 
     private fun shareToPackage(text: String, packageName: String, label: String): String? {

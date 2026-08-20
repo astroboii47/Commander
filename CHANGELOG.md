@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.3
+
+- Added optional web-search fallback when app search has no matches.
+- Added alias suggestions with app and Tasker icons, keyboard navigation, and touch scrolling.
+- Added a configurable Android Settings alias with direct, searchable destinations for common system settings.
+- Added touch long-press on app-search results to open Android App info.
+- Added Finance and Tasks notification categories with dedicated icons.
+- Added Auto, Always, and Hidden visibility modes for every optional Hub tab.
+- Improved Hub summary detection so ordinary notifications used as Android group headers remain in their normal category.
+- Improved incoming and outgoing message detection for supported messaging notifications.
+- Fixed Hub unread highlighting so closing Hub or dismissing one item does not mark every notification as read.
+- Fixed keyboard navigation through long Hub and alias lists so the selected item remains visible.
+- Improved spacing at the bottom of long Hub lists.
+- Reorganised Commander Settings into clearer feature categories.
+
 ## 0.1.0-alpha.2
 
 - Added structured Google Maps searches and directions with `from`, `to`, and travel-mode parsing.

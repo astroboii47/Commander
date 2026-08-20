@@ -44,10 +44,10 @@ object TaskerAliases {
     fun matches(context: Context, input: String): List<TaskerAlias> {
         val normalized = input.trimStart().lowercase()
         return load(context).filter { item ->
-            val prefix = item.alias.lowercase()
+            val prefix = TriggerSettings.effectiveAlias(item.alias.lowercase())
             normalized == prefix || normalized.startsWith("$prefix ")
         }.let { candidates ->
-            val term = candidates.firstOrNull()?.let { normalized.removePrefix(it.alias.lowercase()).trim() }.orEmpty()
+            val term = candidates.firstOrNull()?.let { normalized.removePrefix(TriggerSettings.effectiveAlias(it.alias.lowercase())).trim() }.orEmpty()
             if (term.isBlank()) candidates else candidates.filter {
                 it.label.contains(term, true) || it.taskName.contains(term, true)
             }
