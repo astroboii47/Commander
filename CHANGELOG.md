@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-alpha.4
+
+- Added complete, keyboard-navigable result lists for apps, app shortcuts, Settings, aliases, Tasker tasks, files, folders, and contacts.
+- Added viewport-aware app icon and file preview loading so newly visible rows populate without loading every result in advance.
+- Added notification ignore rules for individual conversations, notification types, and entire apps, with restoration through Hub Manage.
+- Added an option to keep or close the Hub reply popup after sending. The popup now remains available if the originating notification is replaced or removed.
+- Improved Hub reply reconciliation to prevent duplicate outgoing messages and repeated sends.
+- Improved alias acceptance from physical keyboards and prevented duplicate Enter callbacks from executing an alias prematurely.
+- Fixed app-search crashes caused by temporary duplicate lazy-list row identities.
+- Fixed result positioning after returning from a search and kept bottom clearance without adding unwanted top padding.
+- Fixed long result lists so keyboard selection remains visible and no longer stops at the initial viewport.
+
 ## 0.1.0-alpha.3.1
 
 - Added keyboard-driven seen state in Commander Hub. A notification becomes seen after remaining selected for 300 ms.

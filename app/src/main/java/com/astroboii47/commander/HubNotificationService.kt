@@ -26,9 +26,16 @@ data class HubItem(
     val contentIntent: PendingIntent?,
     val replyAction: HubReplyAction?,
     val isSummary: Boolean,
+    val channelId: String?,
+    val shortcutId: String?,
 )
 
-data class HubMessage(val text: String, val sender: String?, val outgoing: Boolean)
+data class HubMessage(
+    val text: String,
+    val sender: String?,
+    val outgoing: Boolean,
+    val time: Long? = null,
+)
 
 data class HubReplyAction(
     val pendingIntent: PendingIntent,
@@ -39,11 +46,25 @@ object HubRepository {
     var items by mutableStateOf<List<HubItem>>(emptyList())
         private set
     private var dismissNotification: ((String) -> Unit)? = null
-    private val sentReplies = mutableMapOf<String, MutableList<HubMessage>>()
+    private var refreshNotifications: (() -> Unit)? = null
+    private data class PendingReply(
+        val message: HubMessage,
+        val sentAt: Long,
+        var acknowledged: Boolean = false,
+    )
+    private val sentReplies = mutableMapOf<String, MutableList<PendingReply>>()
     private val hiddenSummaryKeys = mutableSetOf<String>()
 
     fun attachDismissHandler(handler: ((String) -> Unit)?) {
         dismissNotification = handler
+    }
+
+    fun attachRefreshHandler(handler: (() -> Unit)?) {
+        refreshNotifications = handler
+    }
+
+    fun requestRefresh() {
+        refreshNotifications?.invoke()
     }
 
     fun dismiss(key: String) {
@@ -64,12 +85,47 @@ object HubRepository {
         }
     }
 
+    fun applyIgnoreRules() {
+        items = items.filterNot(HubIgnoreSettings::matches)
+    }
+
     fun recordSentReply(key: String, text: String) {
-        val reply = HubMessage(text, null, true)
-        sentReplies.getOrPut(key) { mutableListOf() }.add(reply)
+        val now = System.currentTimeMillis()
+        val reply = HubMessage(text, null, true, now)
+        sentReplies.getOrPut(key) { mutableListOf() }.add(PendingReply(reply, now))
         items = items.map { item ->
             if (item.key == key) item.copy(messages = item.messages + reply) else item
         }
+    }
+
+    private fun mergeSentReplies(item: HubItem): HubItem {
+        val pending = sentReplies[item.key] ?: return item
+        val now = System.currentTimeMillis()
+        pending.removeAll { now - it.sentAt > SENT_REPLY_RETENTION_MS }
+        if (pending.isEmpty()) {
+            sentReplies.remove(item.key)
+            return item
+        }
+
+        val merged = item.messages.toMutableList()
+        val claimed = mutableSetOf<Int>()
+        pending.forEach { local ->
+            val normalized = local.message.text.normalizedReplyText()
+            val matchIndex = merged.indices.reversed().firstOrNull { index ->
+                val candidate = merged[index]
+                val closeInTime = candidate.time == null ||
+                    kotlin.math.abs(candidate.time - local.sentAt) <= SENT_REPLY_MATCH_WINDOW_MS
+                index !in claimed && closeInTime && candidate.text.normalizedReplyText() == normalized
+            }
+            if (matchIndex != null) {
+                claimed += matchIndex
+                merged[matchIndex] = merged[matchIndex].copy(sender = null, outgoing = true)
+                local.acknowledged = true
+            } else if (!local.acknowledged) {
+                merged += local.message
+            }
+        }
+        return item.copy(messages = merged)
     }
 
     fun replace(notifications: Array<StatusBarNotification>, service: NotificationListenerService) {
@@ -78,8 +134,9 @@ object HubRepository {
             .filter { !it.isOngoing }
             .onEach { it.discoverMessengerConversation(service) }
             .mapNotNull { it.toHubItem(service) }
+            .filterNot(HubIgnoreSettings::matches)
             .filterNot { it.isSummary && it.key in hiddenSummaryKeys }
-            .map { item -> item.copy(messages = item.messages + sentReplies[item.key].orEmpty()) }
+            .map(::mergeSentReplies)
             .sortedByDescending { it.time }
             .toList()
     }
@@ -90,9 +147,8 @@ object HubRepository {
             return
         }
         notification.discoverMessengerConversation(service)
-        val converted = notification.toHubItem(service)?.let { item ->
-            item.copy(messages = item.messages + sentReplies[item.key].orEmpty())
-        }?.takeUnless { it.isSummary && it.key in hiddenSummaryKeys }
+        val converted = notification.toHubItem(service)?.takeUnless(HubIgnoreSettings::matches)?.let(::mergeSentReplies)
+            ?.takeUnless { it.isSummary && it.key in hiddenSummaryKeys }
         items = if (converted == null) {
             items.filterNot { it.key == notification.key }
         } else {
@@ -107,13 +163,19 @@ object HubRepository {
     }
 }
 
+private const val SENT_REPLY_RETENTION_MS = 10 * 60 * 1000L
+private const val SENT_REPLY_MATCH_WINDOW_MS = 2 * 60 * 1000L
+private fun String.normalizedReplyText(): String = trim().replace(Regex("\\s+"), " ")
+
 class HubNotificationService : NotificationListenerService() {
     override fun onListenerConnected() {
         HubRepository.attachDismissHandler(::cancelNotification)
+        HubRepository.attachRefreshHandler(::refresh)
         refresh()
     }
     override fun onListenerDisconnected() {
         HubRepository.attachDismissHandler(null)
+        HubRepository.attachRefreshHandler(null)
     }
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
@@ -185,7 +247,12 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
                 // supplied an explicit self identity.
                 val outgoing = selfNames.any { it.equals(rawSender, true) } ||
                     (rawSender == null && selfNames.isNotEmpty())
-                HubMessage(body, if (outgoing) null else sender, outgoing)
+                HubMessage(
+                    text = body,
+                    sender = if (outgoing) null else sender,
+                    outgoing = outgoing,
+                    time = message.timestamp.takeIf { it > 0L },
+                )
             }
     }.getOrDefault(emptyList()) else emptyList()
     val hasSummaryFlag = notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
@@ -221,6 +288,8 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
         // Keep those useful rows in their normal category. The summaries tab
         // is reserved for rows whose content is actually aggregate.
         isSummary = isAggregateSummary,
+        channelId = notification.channelId,
+        shortcutId = notification.shortcutId,
     )
 }
 
@@ -239,6 +308,10 @@ fun HubItem.sendReply(context: android.content.Context, text: String): Boolean {
         return false
     }
     if (text.isBlank()) return false
+    if (!HubReplySendGuard.acquire(key, text)) {
+        Log.i("MinimalHubReply", "ignored repeated send key=$key")
+        return true
+    }
     Log.i("MinimalHubReply", "send key=$key pkg=$packageName inputs=${reply.remoteInputs.joinToString { it.resultKey }} length=${text.length}")
     return runCatching {
         val results = android.os.Bundle().apply {
@@ -253,5 +326,29 @@ fun HubItem.sendReply(context: android.content.Context, text: String): Boolean {
         Log.i("MinimalHubReply", "pendingIntent accepted key=$key")
         HubRepository.recordSentReply(key, text)
         true
-    }.onFailure { Log.e("MinimalHubReply", "pendingIntent failed key=$key", it) }.getOrDefault(false)
+    }.onFailure {
+        HubReplySendGuard.release(key, text)
+        Log.e("MinimalHubReply", "pendingIntent failed key=$key", it)
+    }.getOrDefault(false)
+}
+
+private object HubReplySendGuard {
+    private const val RepeatWindowMs = 900L
+    private val recent = mutableMapOf<String, Pair<String, Long>>()
+
+    @Synchronized
+    fun acquire(key: String, text: String): Boolean {
+        val now = System.currentTimeMillis()
+        val normalized = text.normalizedReplyText()
+        val previous = recent[key]
+        if (previous != null && previous.first == normalized && now - previous.second < RepeatWindowMs) return false
+        recent[key] = normalized to now
+        return true
+    }
+
+    @Synchronized
+    fun release(key: String, text: String) {
+        val normalized = text.normalizedReplyText()
+        if (recent[key]?.first == normalized) recent.remove(key)
+    }
 }

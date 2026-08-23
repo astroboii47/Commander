@@ -183,6 +183,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var holdFirstForAlt by remember { mutableStateOf(HomeTypingSettings.holdFirstForAlt.value) }
     var hubTabModes by remember { mutableStateOf(HubSettings.tabVisibility.value) }
     var quickHubNavigation by remember { mutableStateOf(HubSettings.quickKeyboardNavigation.value) }
+    var closeHubReplyAfterSending by remember { mutableStateOf(HubSettings.closeReplyAfterSending.value) }
     var geminiKey by remember { mutableStateOf(GeminiSettings.apiKey(activity)) }
     var directSms by remember { mutableStateOf(SmsSettings.directEnabled(activity)) }
     val contactsGranted = ActivityCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
@@ -317,6 +318,21 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             Switch(
                 checked = pulseConfirmation,
                 onCheckedChange = { pulseConfirmation = it; saved = false },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Close reply after sending", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Return to the Hub list after a successful reply", color = Color(0xFF99958E), fontSize = 12.sp)
+            }
+            Switch(
+                checked = closeHubReplyAfterSending,
+                onCheckedChange = {
+                    closeHubReplyAfterSending = it
+                    HubSettings.saveCloseReplyAfterSending(activity, it)
+                },
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )
         }

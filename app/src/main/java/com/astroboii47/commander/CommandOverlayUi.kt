@@ -9,7 +9,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -24,6 +23,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,8 +42,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -57,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,6 +103,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 private val OverlayAccent: Color get() = AccentSettings.color.value
 private val OverlayMono = FontFamily(
@@ -109,6 +113,7 @@ private val OverlayMono = FontFamily(
 private val OverlaySans = FontFamily(Font(R.font.inter_variable))
 private val OverlaySerif = FontFamily(Font(R.font.instrument_serif_regular))
 private const val InputSentinel = '\u2060'
+private val ResultViewportBottomPadding = 10.dp
 
 private data class OverlayPalette(
     val panel: Color,
@@ -163,6 +168,8 @@ fun CommandOverlayApp(
     var selectedContactKind by remember { mutableStateOf<CommandKind?>(null) }
     var previousStageQuery by remember { mutableStateOf<String?>(null) }
     var selectedIndex by remember { mutableStateOf(0) }
+    var visibleAppIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var visibleFileIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
     var executing by remember { mutableStateOf(false) }
     var askPreview by remember { mutableStateOf(initialAskPreview) }
     var askWaiting by remember { mutableStateOf(initialAskWaiting) }
@@ -172,6 +179,7 @@ fun CommandOverlayApp(
     var editorFocused by remember { mutableStateOf(false) }
     var automaticallyOpenedAppKey by remember { mutableStateOf<String?>(null) }
     var heldOverlayFirstKey by remember { mutableStateOf(android.view.KeyEvent.KEYCODE_UNKNOWN) }
+    var executeBlockedUntil by remember { mutableStateOf(0L) }
     val isHomeTypingLaunch = remember { initialQuery.isNotEmpty() && HomeTypingHandoff.isCollecting() }
     val askPrompt = remember(initialAskPrompt) { initialAskPrompt.orEmpty() }
     val parsed = remember(query) { parseCommand(query) }
@@ -194,16 +202,16 @@ fun CommandOverlayApp(
     val shortcutQuery = remember(query, aliasSuggestions) {
         if (aliasSuggestions.isEmpty()) AppShortcutSettings.query(engine.context, query) else null
     }
-    val taskerResults = remember(query, maxVisibleResults, aliasSuggestions) {
-        if (aliasSuggestions.isEmpty()) TaskerAliases.matches(engine.context, query).take(maxVisibleResults) else emptyList()
+    val taskerResults = remember(query, aliasSuggestions) {
+        if (aliasSuggestions.isEmpty()) TaskerAliases.matches(engine.context, query) else emptyList()
     }
     val calculatorResult = remember(parsed.kind, parsed.text) {
         if (parsed.kind == CommandKind.Calculator) engine.calculatorPreview(parsed.text) else null
     }
     val inGeminiConversation = askMessages.isNotEmpty()
     val activeKind = if (inGeminiConversation) CommandKind.Ask else selectedContactKind ?: parsed.kind
-    val baseApps = remember(query, activeKind, aliasMatch, maxVisibleResults) {
-        if (activeKind == CommandKind.Apps && aliasMatch == null && aliasSuggestions.isEmpty()) engine.searchApps(parsed.text, maxVisibleResults) else emptyList()
+    val baseApps = remember(query, activeKind, aliasMatch) {
+        if (activeKind == CommandKind.Apps && aliasMatch == null && aliasSuggestions.isEmpty()) engine.searchApps(parsed.text, Int.MAX_VALUE) else emptyList()
     }
     var apps by remember { mutableStateOf<List<AppResult>>(emptyList()) }
     var rawFiles by remember { mutableStateOf<List<FileResult>>(emptyList()) }
@@ -220,9 +228,9 @@ fun CommandOverlayApp(
     val hasFileAccess = engine.hasFileSearchAccess()
     val hasContactsPermission = engine.hasContactsPermission()
     val contactQuery = if (selectedContact == null) parsed.text else ""
-    val contacts = remember(activeKind, contactQuery, maxVisibleResults) {
+    val contacts = remember(activeKind, contactQuery) {
         if ((activeKind == CommandKind.Message || activeKind == CommandKind.Call) && selectedContact == null) {
-            engine.searchContacts(contactQuery, maxVisibleResults, includeMessenger = activeKind == CommandKind.Message)
+            engine.searchContacts(contactQuery, Int.MAX_VALUE, includeMessenger = activeKind == CommandKind.Message)
         } else emptyList()
     }
     val actionReady = when {
@@ -302,7 +310,7 @@ fun CommandOverlayApp(
         }
     }
 
-    LaunchedEffect(baseApps) {
+    LaunchedEffect(baseApps, maxVisibleResults) {
         val retained = apps.associateBy { it.packageName }
         val stable = baseApps.map { fresh ->
             retained[fresh.packageName]?.takeIf { it.icon != null }?.copy(label = fresh.label) ?: fresh
@@ -311,11 +319,33 @@ fun CommandOverlayApp(
         // avoiding needless package-manager work, this keeps an unchanged app
         // in an unchanged slot visually stable while the query evolves.
         apps = stable
-        val missing = stable.filter { it.icon == null }
+        // Results are complete, but icon decoding follows the viewport so a
+        // broad one-letter query does not decode every installed app at once.
+        val missing = stable.take(maxVisibleResults).filter { it.icon == null }
         if (missing.isNotEmpty()) {
             val loaded = withContext(Dispatchers.IO) { engine.loadVisibleAppIcons(missing) }
                 .associateBy { it.packageName }
             apps = stable.map { loaded[it.packageName] ?: it }
+        }
+    }
+    LaunchedEffect(selectedIndex, baseApps) {
+        val selected = apps.getOrNull(selectedIndex) ?: return@LaunchedEffect
+        if (selected.icon == null) {
+            val loaded = withContext(Dispatchers.IO) { engine.loadVisibleAppIcons(listOf(selected)).firstOrNull() }
+                ?: return@LaunchedEffect
+            apps = apps.mapIndexed { index, app -> if (index == selectedIndex) loaded else app }
+        }
+    }
+    LaunchedEffect(baseApps, visibleAppIndices) {
+        val snapshot = apps
+        val missingIndices = visibleAppIndices.filter { index -> snapshot.getOrNull(index)?.icon == null }
+        if (missingIndices.isEmpty()) return@LaunchedEffect
+        val missing = missingIndices.mapNotNull(snapshot::getOrNull)
+        val loaded = withContext(Dispatchers.IO) { engine.loadVisibleAppIcons(missing) }
+        if (loaded.isEmpty()) return@LaunchedEffect
+        val loadedByPosition = missingIndices.zip(loaded).toMap()
+        apps = apps.mapIndexed { index, app ->
+            loadedByPosition[index]?.takeIf { it.packageName == app.packageName } ?: app
         }
     }
     LaunchedEffect(query, baseApps, activeKind, aliasMatch, shortcutQuery, taskerResults, AppSearchSettings.openSingleResult.value) {
@@ -350,12 +380,27 @@ fun CommandOverlayApp(
     LaunchedEffect(fileSearchQuery, activeKind, fileSortMode, maxVisibleResults) {
         rawFiles = if (activeKind == CommandKind.Files && fileSearchQuery.query.isNotBlank()) {
             delay(140)
-            withContext(Dispatchers.IO) { engine.loadFilePreviews(engine.searchFiles(fileSearchQuery.query, maxVisibleResults, fileSearchQuery.mode, fileSortMode)) }
+            withContext(Dispatchers.IO) {
+                val all = engine.searchFiles(fileSearchQuery.query, Int.MAX_VALUE, fileSearchQuery.mode, fileSortMode)
+                val previewed = engine.loadFilePreviews(all.take(maxVisibleResults)).associateBy { it.uri }
+                all.map { previewed[it.uri] ?: it }
+            }
         } else emptyList()
     }
-    LaunchedEffect(shortcutQuery, maxVisibleResults) {
+    LaunchedEffect(files, visibleFileIndices) {
+        if (activeKind != CommandKind.Files) return@LaunchedEffect
+        val missing = visibleFileIndices.mapNotNull(files::getOrNull).filter { !it.isDirectory && it.thumbnail == null }
+        if (missing.isEmpty()) return@LaunchedEffect
+        val loaded = withContext(Dispatchers.IO) { engine.loadFilePreviews(missing) }
+            .filter { it.thumbnail != null }
+            .associateBy { it.uri }
+        if (loaded.isNotEmpty()) {
+            rawFiles = rawFiles.map { loaded[it.uri] ?: it }
+        }
+    }
+    LaunchedEffect(shortcutQuery) {
         shortcutResults = if (shortcutQuery != null) {
-            withContext(Dispatchers.IO) { AppShortcutCatalog.search(engine.context, shortcutQuery, maxVisibleResults) }
+            withContext(Dispatchers.IO) { AppShortcutCatalog.search(engine.context, shortcutQuery) }
         } else emptyList()
     }
 
@@ -365,8 +410,18 @@ fun CommandOverlayApp(
 
     fun execute() {
         if (executing) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now < executeBlockedUntil) return
         if (aliasSuggestions.isNotEmpty()) {
             aliasSuggestions.getOrNull(selectedIndex.coerceIn(0, aliasSuggestions.lastIndex))?.let { suggestion ->
+                // Some physical-keyboard IMEs emit both Enter and editor Go.
+                // This press accepts the suggestion only; never let its second
+                // callback immediately execute the newly entered alias.
+                executeBlockedUntil = now + 300L
+                // Home typing may still have a delayed final value without
+                // the accepted trailing space. End that handoff before the
+                // local stage transition so it cannot restore the old alias.
+                HomeTypingHandoff.finish()
                 SoundFeedback.play(engine.context, CommandSound.Step)
                 setEditorQuery("${suggestion.alias} ")
                 selectedIndex = 0
@@ -684,7 +739,7 @@ fun CommandOverlayApp(
                 }
                 aliasMatch != null -> OverlayAliasPreview(aliasMatch, aliasIcon, palette, ::execute)
                 activeKind == CommandKind.Calculator && calculatorResult != null -> OverlayCalculatorResult(calculatorResult, palette, ::execute)
-                shortcutQuery != null -> OverlayShortcutResults(shortcutResults, selectedIndex, palette) { shortcut ->
+                shortcutQuery != null -> OverlayShortcutResults(shortcutResults, selectedIndex, maxVisibleResults, palette) { shortcut ->
                     executing = true
                     scope.launch {
                         delay(135)
@@ -696,7 +751,7 @@ fun CommandOverlayApp(
                         } else notice = error
                     }
                 }
-                taskerResults.isNotEmpty() -> OverlayTaskerResults(taskerResults, selectedIndex, palette) { task ->
+                taskerResults.isNotEmpty() -> OverlayTaskerResults(taskerResults, selectedIndex, maxVisibleResults, palette) { task ->
                     executing = true
                     scope.launch {
                         delay(135)
@@ -709,7 +764,9 @@ fun CommandOverlayApp(
                 activeKind == CommandKind.Apps && query.isNotBlank() -> OverlayAppResults(
                     apps = apps,
                     selectedIndex = selectedIndex,
+                    visibleRowCount = maxVisibleResults,
                     palette = palette,
+                    onVisibleIndicesChanged = { visibleAppIndices = it },
                     onClick = { app ->
                         executing = true
                         scope.launch {
@@ -728,7 +785,14 @@ fun CommandOverlayApp(
                     },
                 )
                 activeKind == CommandKind.Files && !hasFileAccess -> OverlayFileAccess(palette) { engine.openFileSearchAccess() }
-                activeKind == CommandKind.Files && parsed.text.isNotBlank() -> OverlayFileResults(files, selectedIndex, palette, fileSortMode) { file ->
+                activeKind == CommandKind.Files && parsed.text.isNotBlank() -> OverlayFileResults(
+                    files,
+                    selectedIndex,
+                    maxVisibleResults,
+                    palette,
+                    fileSortMode,
+                    onVisibleIndicesChanged = { visibleFileIndices = it },
+                ) { file ->
                     executing = true
                     scope.launch {
                         delay(135)
@@ -742,7 +806,7 @@ fun CommandOverlayApp(
                     OverlayContactAccess(palette) { engine.requestContactsPermission() }
                 }
                 (activeKind == CommandKind.Message || activeKind == CommandKind.Call) && query.length > 1 && selectedContact == null -> {
-                    OverlayContactResults(contacts, parsed, selectedIndex, palette) { contact ->
+                    OverlayContactResults(contacts, parsed, selectedIndex, maxVisibleResults, palette) { contact ->
                         previousStageQuery = query
                         selectedContact = contact
                         selectedContactKind = activeKind
@@ -1010,7 +1074,13 @@ fun CommandOverlayApp(
                             textStyle = TextStyle(color = palette.text, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp),
                             cursorBrush = SolidColor(OverlayAccent),
                             visualTransformation = SentinelTransformation(when {
+                                aliasSuggestions.isNotEmpty() -> AliasPrefixTransformation(
+                                    aliasSuggestions.getOrNull(selectedIndex)?.alias?.length ?: 0,
+                                )
                                 taskerResults.isNotEmpty() -> AliasPrefixTransformation(taskerResults.first().alias.length)
+                                shortcutQuery != null -> AliasPrefixTransformation(
+                                    TriggerSettings.effectiveAlias(AppShortcutSettings.alias(engine.context)).length,
+                                )
                                 aliasMatch != null -> AliasPrefixTransformation(aliasMatch.alias.length)
                                 activeKind == CommandKind.Todo -> TodoistRecognitionTransformation
                                 else -> CommandPrefixTransformation
@@ -1292,7 +1362,9 @@ private fun OverlayCompletion(text: String, palette: OverlayPalette, focusReques
 private fun OverlayAppResults(
     apps: List<AppResult>,
     selectedIndex: Int,
+    visibleRowCount: Int,
     palette: OverlayPalette,
+    onVisibleIndicesChanged: (List<Int>) -> Unit,
     onClick: (AppResult) -> Unit,
     onLongClick: (AppResult) -> Unit,
 ) {
@@ -1301,19 +1373,22 @@ private fun OverlayAppResults(
         return
     }
     val animationMode = AppearanceSettings.listAnimation.value
-    val targetHeight = (apps.size * 66 + (apps.size - 1) * 8).dp
-    val listHeight by animateDpAsState(
-        targetValue = targetHeight,
-        animationSpec = when (animationMode) {
-            ListAnimationMode.Off -> tween(0)
-            ListAnimationMode.Quick -> tween(100)
-            ListAnimationMode.Smooth -> tween(240)
-        },
-        label = "appListHeight",
-    )
-    Column(Modifier.fillMaxWidth().height(listHeight)) {
-        apps.forEachIndexed { index, app ->
-            if (index > 0) Spacer(Modifier.height(8.dp))
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, apps.firstOrNull()?.packageName, apps.size) {
+        if (selectedIndex in apps.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LaunchedEffect(listState, apps.size) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
+            .distinctUntilChanged()
+            .collect(onVisibleIndicesChanged)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth().height(resultListHeight(apps.size, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        itemsIndexed(apps, key = { index, app -> "${app.packageName}:$index" }) { index, app ->
             if (animationMode == ListAnimationMode.Off) {
                 OverlayAppResultRow(app, index == selectedIndex, palette, onClick, onLongClick)
             } else {
@@ -1402,6 +1477,7 @@ private fun OverlayAppResultRow(
 private fun OverlayShortcutResults(
     shortcuts: List<AppShortcutResult>,
     selectedIndex: Int,
+    visibleRowCount: Int,
     palette: OverlayPalette,
     onClick: (AppShortcutResult) -> Unit,
 ) {
@@ -1409,8 +1485,18 @@ private fun OverlayShortcutResults(
         OverlayNotice("no app shortcuts found", palette)
         return
     }
-    shortcuts.forEachIndexed { index, shortcut ->
-        if (index > 0) Spacer(Modifier.height(8.dp))
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, shortcuts.firstOrNull()?.id, shortcuts.size) {
+        if (selectedIndex in shortcuts.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth()
+            .heightIn(max = resultListHeight(shortcuts.size, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+    itemsIndexed(shortcuts, key = { _, shortcut -> "${shortcut.packageName}:${shortcut.id}" }) { index, shortcut ->
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
                 .background(if (index == selectedIndex) OverlayAccent.copy(alpha = .22f) else palette.tile)
@@ -1425,6 +1511,7 @@ private fun OverlayShortcutResults(
             }
             if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
         }
+    }
     }
 }
 
@@ -1441,21 +1528,19 @@ private fun OverlaySettingsResults(
         OverlayNotice("no matching settings", palette)
         return
     }
-    val scrollState = rememberScrollState()
-    Column(
-        Modifier.fillMaxWidth()
-            .heightIn(max = (visibleRowCount * 66 + (visibleRowCount - 1).coerceAtLeast(0) * 8).dp)
-            .verticalScroll(scrollState),
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, results.firstOrNull()?.action, results.size) {
+        if (selectedIndex in results.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth().height(resultListHeight(results.size, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        results.forEachIndexed { index, result ->
-            if (index > 0) Spacer(Modifier.height(8.dp))
-            val bringIntoViewRequester = remember { BringIntoViewRequester() }
-            LaunchedEffect(index == selectedIndex) {
-                if (index == selectedIndex) bringIntoViewRequester.bringIntoView()
-            }
+        itemsIndexed(results, key = { _, result -> result.action }) { index, result ->
             Row(
-                Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester)
-                    .clip(RoundedCornerShape(15.dp))
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
                     .background(if (index == selectedIndex) OverlayAccent.copy(alpha = .22f) else palette.tile)
                     .border(1.dp, if (index == selectedIndex) OverlayAccent else palette.border, RoundedCornerShape(15.dp))
                     .clickable { onClick(result) }.padding(12.dp),
@@ -1481,18 +1566,17 @@ private fun OverlayAliasSuggestions(
     onClick: (AliasSuggestion) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val scrollState = rememberScrollState()
-    Column(
-        Modifier.fillMaxWidth()
-            .heightIn(max = (visibleRowCount * 66 + (visibleRowCount - 1).coerceAtLeast(0) * 8).dp)
-            .verticalScroll(scrollState),
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, suggestions.firstOrNull()?.alias, suggestions.size) {
+        if (selectedIndex in suggestions.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth().height(resultListHeight(suggestions.size, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-    suggestions.forEachIndexed { index, suggestion ->
-        if (index > 0) Spacer(Modifier.height(8.dp))
-        val bringIntoViewRequester = remember { BringIntoViewRequester() }
-        LaunchedEffect(index == selectedIndex) {
-            if (index == selectedIndex) bringIntoViewRequester.bringIntoView()
-        }
+    itemsIndexed(suggestions, key = { _, suggestion -> "${suggestion.alias}:${suggestion.subtitle}" }) { index, suggestion ->
         val icon = remember(suggestion.packageName, suggestion.taskerAlias?.iconBase64) {
             suggestion.taskerAlias?.let { TaskerAliases.icon(context, it) }
                 ?: suggestion.packageName?.let { packageName ->
@@ -1500,7 +1584,7 @@ private fun OverlayAliasSuggestions(
                 }
         }
         Row(
-            Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester).clip(RoundedCornerShape(15.dp))
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
                 .background(if (index == selectedIndex) OverlayAccent.copy(alpha = .22f) else palette.tile)
                 .border(1.dp, if (index == selectedIndex) OverlayAccent else palette.border, RoundedCornerShape(15.dp))
                 .clickable { onClick(suggestion) }.padding(12.dp),
@@ -1528,12 +1612,23 @@ private fun OverlayAliasSuggestions(
 private fun OverlayTaskerResults(
     tasks: List<TaskerAlias>,
     selectedIndex: Int,
+    visibleRowCount: Int,
     palette: OverlayPalette,
     onClick: (TaskerAlias) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    tasks.forEachIndexed { index, task ->
-        if (index > 0) Spacer(Modifier.height(8.dp))
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, tasks.firstOrNull()?.taskName, tasks.size) {
+        if (selectedIndex in tasks.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth()
+            .heightIn(max = resultListHeight(tasks.size, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+    itemsIndexed(tasks, key = { _, task -> "${task.alias}:${task.taskName}" }) { index, task ->
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
                 .background(if (index == selectedIndex) OverlayAccent.copy(alpha = .22f) else palette.tile)
@@ -1550,16 +1645,42 @@ private fun OverlayTaskerResults(
             if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
         }
     }
+    }
 }
 
+private fun resultViewportHeight(visibleRowCount: Int) =
+    (visibleRowCount * 66 + (visibleRowCount - 1).coerceAtLeast(0) * 8).dp
+
 @Composable
-private fun OverlayFileResults(files: List<FileResult>, selectedIndex: Int, palette: OverlayPalette, sortMode: FileSortMode, onClick: (FileResult) -> Unit) {
+private fun OverlayFileResults(
+    files: List<FileResult>,
+    selectedIndex: Int,
+    visibleRowCount: Int,
+    palette: OverlayPalette,
+    sortMode: FileSortMode,
+    onVisibleIndicesChanged: (List<Int>) -> Unit,
+    onClick: (FileResult) -> Unit,
+) {
     if (files.isEmpty()) {
         OverlayNotice("no matching files", palette)
         return
     }
-    files.forEachIndexed { index, file ->
-        if (index > 0) Spacer(Modifier.height(8.dp))
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, files.firstOrNull()?.uri, files.size) {
+        if (selectedIndex in files.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LaunchedEffect(listState, files.size) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
+            .distinctUntilChanged()
+            .collect(onVisibleIndicesChanged)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth().height(resultListHeight(files.size, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+    itemsIndexed(files, key = { index, file -> "${file.uri}:$index" }) { index, file ->
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(palette.tile)
                 .border(1.dp, if (index == selectedIndex) OverlayAccent.copy(alpha = .7f) else palette.border, RoundedCornerShape(15.dp))
@@ -1600,6 +1721,7 @@ private fun OverlayFileResults(files: List<FileResult>, selectedIndex: Int, pale
                 if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
             }
         }
+    }
     }
 }
 
@@ -1673,6 +1795,7 @@ private fun OverlayContactResults(
     contacts: List<ContactResult>,
     parsed: ParsedCommand,
     selectedIndex: Int,
+    visibleRowCount: Int,
     palette: OverlayPalette,
     onSelect: (ContactResult) -> Unit,
 ) {
@@ -1680,8 +1803,17 @@ private fun OverlayContactResults(
         OverlayNotice("no matching contacts", palette)
         return
     }
-    contacts.forEachIndexed { index, contact ->
-        if (index > 0) Spacer(Modifier.height(8.dp))
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, contacts.firstOrNull()?.messengerShortcutId, contacts.firstOrNull()?.number, contacts.size) {
+        if (selectedIndex in contacts.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth().height(resultListHeight(contacts.size, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+    itemsIndexed(contacts, key = { _, contact -> contact.messengerShortcutId ?: "${contact.name}:${contact.number}" }) { index, contact ->
         val visibleState = remember(contact.name, contact.number) { MutableTransitionState(false).apply { targetState = true } }
         AnimatedVisibility(
             visibleState = visibleState,
@@ -1718,6 +1850,28 @@ private fun OverlayContactResults(
         }
         }
     }
+    }
+}
+
+private fun resultListHeight(itemCount: Int, visibleRowCount: Int) =
+    resultViewportHeight(minOf(itemCount, visibleRowCount).coerceAtLeast(1)) + ResultViewportBottomPadding
+
+private suspend fun LazyListState.keepSelectionVisible(index: Int, visibleRowCount: Int) {
+    if (index == 0) {
+        scrollToItem(0)
+        return
+    }
+    val visible = layoutInfo.visibleItemsInfo
+    if (visible.isEmpty()) {
+        scrollToItem(index)
+        return
+    }
+    val selected = visible.firstOrNull { it.index == index }
+    val fullyVisible = selected != null && selected.offset >= layoutInfo.viewportStartOffset &&
+        selected.offset + selected.size <= layoutInfo.viewportEndOffset
+    if (fullyVisible) return
+    val target = if (index < firstVisibleItemIndex) index else (index - visibleRowCount + 1).coerceAtLeast(0)
+    animateScrollToItem(target)
 }
 
 @Composable

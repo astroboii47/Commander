@@ -47,13 +47,13 @@ object AppShortcutCatalog {
 
     fun clear() { cached = null }
 
-    fun search(context: Context, query: String, limit: Int = 6): List<AppShortcutResult> {
+    fun search(context: Context, query: String): List<AppShortcutResult> {
         val all = cached ?: load(context.applicationContext).also { cached = it }
         val needle = query.trim().lowercase(Locale.ROOT)
         return all.asSequence()
             .filter { needle.isBlank() || needle in it.label.lowercase(Locale.ROOT) || needle in it.appLabel.lowercase(Locale.ROOT) }
             .sortedWith(compareBy<AppShortcutResult> { needle.isNotBlank() && !it.label.startsWith(needle, true) }.thenBy { it.label })
-            .take(limit).toList()
+            .toList()
     }
 
     fun launch(context: Context, result: AppShortcutResult): String? = runCatching {

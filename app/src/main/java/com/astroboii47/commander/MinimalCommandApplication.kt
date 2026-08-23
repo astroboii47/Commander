@@ -19,6 +19,7 @@ class MinimalCommandApplication : Application() {
         SoundFeedback.initialize(this)
         HomeTypingSettings.initialize(this)
         HubSettings.initialize(this)
+        HubIgnoreSettings.initialize(this)
         AppCatalog.initialize(this)
         publishDynamicShortcuts()
     }

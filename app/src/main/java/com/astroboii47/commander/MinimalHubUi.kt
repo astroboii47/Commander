@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -124,8 +125,10 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
     var filter by remember { mutableStateOf(HubFilter.All) }
     var managing by remember { mutableStateOf(false) }
     var replyKey by remember { mutableStateOf<String?>(null) }
+    var replyItemSnapshot by remember { mutableStateOf<HubItem?>(null) }
     var replyText by remember { mutableStateOf("") }
     var replyStatus by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var ignorePrompt by remember { mutableStateOf<HubItem?>(null) }
     var selectedIndex by remember { mutableStateOf(0) }
     var keyboardBrowsing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -215,6 +218,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                         if (item.replyAction != null) {
                             markRead(item)
                             replyKey = item.key
+                            replyItemSnapshot = item
                             replyText = ""
                             replyStatus = null
                         } else {
@@ -295,6 +299,11 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
             ) {
                 if (managing) {
                     HubCategoryManager(allItems, categoryOverrides, palette, ::cycleCategory)
+                    Spacer(Modifier.height(24.dp))
+                    HubIgnoredManager(palette) { rule ->
+                        HubIgnoreSettings.remove(context, rule.id)
+                        HubRepository.requestRefresh()
+                    }
                 } else if (!hasAccess) {
                     HubAccessCard(palette, openAccessSettings)
                 } else if (visible.isEmpty()) {
@@ -345,10 +354,17 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                                     replyText = replyText,
                                     replyStatus = replyStatus?.takeIf { it.first == item.key }?.second,
                                     onToggleFlag = { toggleFlag(item.key) },
+                                    onLongPress = { ignorePrompt = item },
                                     onMarkRead = { markRead(item) },
                                     onToggleReply = {
                                         markRead(item)
-                                        replyKey = if (replyKey == item.key) null else item.key
+                                        if (replyKey == item.key) {
+                                            replyKey = null
+                                            replyItemSnapshot = null
+                                        } else {
+                                            replyKey = item.key
+                                            replyItemSnapshot = item
+                                        }
                                         replyText = ""
                                         replyStatus = null
                                     },
@@ -358,7 +374,15 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                                         replyStatus = item.key to if (sent) "reply sent" else "couldn't send"
                                         if (sent) {
                                             replyText = ""
-                                            scope.launch { delay(1_250); replyKey = null; replyStatus = null }
+                                            replyItemSnapshot = HubRepository.items.firstOrNull { it.key == item.key } ?: item
+                                            if (HubSettings.closeReplyAfterSending.value) {
+                                                scope.launch {
+                                                    delay(1_250)
+                                                    replyKey = null
+                                                    replyItemSnapshot = null
+                                                    replyStatus = null
+                                                }
+                                            }
                                         }
                                     },
                                 )
@@ -370,7 +394,11 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 }
             }
         }
-        val popupItem = allItems.firstOrNull { it.key == replyKey }
+        val livePopupItem = allItems.firstOrNull { it.key == replyKey }
+        LaunchedEffect(livePopupItem) {
+            if (livePopupItem != null) replyItemSnapshot = livePopupItem
+        }
+        val popupItem = livePopupItem ?: replyItemSnapshot?.takeIf { it.key == replyKey }
         if (popupItem != null) {
             HubReplyPopup(
                 item = popupItem,
@@ -378,14 +406,45 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 replyText = replyText,
                 replyStatus = replyStatus?.takeIf { it.first == popupItem.key }?.second,
                 onReplyTextChange = { replyText = it },
-                onDismiss = { replyKey = null; replyText = ""; replyStatus = null },
+                onDismiss = {
+                    replyKey = null
+                    replyItemSnapshot = null
+                    replyText = ""
+                    replyStatus = null
+                },
                 onSendReply = {
                     val sent = popupItem.sendReply(context, replyText.trim())
                     replyStatus = popupItem.key to if (sent) "reply sent" else "couldn't send"
                     if (sent) {
                         replyText = ""
-                        scope.launch { delay(850); replyKey = null; replyStatus = null }
+                        replyItemSnapshot = HubRepository.items.firstOrNull { it.key == popupItem.key } ?: popupItem
+                        if (HubSettings.closeReplyAfterSending.value) {
+                            scope.launch {
+                                delay(850)
+                                replyKey = null
+                                replyItemSnapshot = null
+                                replyStatus = null
+                            }
+                        }
                     }
+                },
+            )
+        }
+        ignorePrompt?.let { item ->
+            HubIgnorePrompt(
+                item = item,
+                palette = palette,
+                onDismiss = { ignorePrompt = null },
+                onIgnoreScope = {
+                    if (HubIgnoreSettings.ignoreScope(context, item)) {
+                        HubRepository.applyIgnoreRules()
+                        ignorePrompt = null
+                    }
+                },
+                onIgnoreApp = {
+                    HubIgnoreSettings.ignoreApp(context, item)
+                    HubRepository.applyIgnoreRules()
+                    ignorePrompt = null
                 },
             )
         }
@@ -536,6 +595,77 @@ private fun HubCategoryManager(
 }
 
 @Composable
+private fun HubIgnoredManager(
+    palette: HubPalette,
+    onRestore: (HubIgnoreRule) -> Unit,
+) {
+    Text("ignored notifications", color = palette.text, fontFamily = HubSans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+    Text("tap a rule to restore it", color = palette.secondary, fontFamily = HubMono, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+    if (HubIgnoreSettings.rules.value.isEmpty()) {
+        Text("nothing ignored", color = palette.secondary, fontFamily = HubMono, fontSize = 12.sp)
+        return
+    }
+    HubIgnoreSettings.rules.value.forEachIndexed { index, rule ->
+        if (index > 0) Spacer(Modifier.height(7.dp))
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(palette.tile)
+                .border(1.dp, palette.border, RoundedCornerShape(14.dp))
+                .clickable { onRestore(rule) }.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(rule.appName, color = palette.text, fontFamily = HubSans, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text(rule.scopeLabel ?: "all notifications", color = palette.secondary, fontFamily = HubMono, fontSize = 11.sp)
+            }
+            Text("restore", color = HubAccent, fontFamily = HubMono, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun HubIgnorePrompt(
+    item: HubItem,
+    palette: HubPalette,
+    onDismiss: () -> Unit,
+    onIgnoreScope: () -> Unit,
+    onIgnoreApp: () -> Unit,
+) {
+    BackHandler(onBack = onDismiss)
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = .68f)).clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().widthIn(max = 480.dp).padding(22.dp)
+                .clip(RoundedCornerShape(22.dp)).background(palette.panel)
+                .border(1.dp, HubAccent.copy(alpha = .72f), RoundedCornerShape(22.dp))
+                .clickable(enabled = false) {}.padding(18.dp),
+        ) {
+            Text("ignore notification", color = palette.secondary, fontFamily = HubMono, fontSize = 11.sp)
+            Text(item.primaryHubTitle(), color = palette.text, fontFamily = HubSerif, fontSize = 27.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(16.dp))
+            if (!item.shortcutId.isNullOrBlank() || !item.conversationTitle.isNullOrBlank() || !item.channelId.isNullOrBlank()) {
+                HubIgnoreChoice("ignore this type or conversation", "keep other ${item.appName} notifications", palette, onIgnoreScope)
+                Spacer(Modifier.height(9.dp))
+            }
+            HubIgnoreChoice("ignore everything from ${item.appName}", "hide the entire app from Hub", palette, onIgnoreApp)
+            Text("tap outside to cancel", color = palette.secondary, fontFamily = HubMono, fontSize = 10.sp, modifier = Modifier.align(Alignment.End).padding(top = 12.dp))
+        }
+    }
+}
+
+@Composable
+private fun HubIgnoreChoice(title: String, subtitle: String, palette: HubPalette, onClick: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(palette.tile)
+            .border(1.dp, palette.border, RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(13.dp),
+    ) {
+        Text(title, color = palette.text, fontFamily = HubSans, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text(subtitle, color = palette.secondary, fontFamily = HubMono, fontSize = 10.sp, modifier = Modifier.padding(top = 3.dp))
+    }
+}
+
+@Composable
 private fun HubAccessCard(palette: HubPalette, openSettings: () -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.tile)
@@ -558,6 +688,7 @@ private fun HubNotificationCard(
     replyText: String,
     replyStatus: String?,
     onToggleFlag: () -> Unit,
+    onLongPress: () -> Unit,
     onMarkRead: () -> Unit,
     onToggleReply: () -> Unit,
     onReplyTextChange: (String) -> Unit,
@@ -587,9 +718,10 @@ private fun HubNotificationCard(
                 if (selected) HubAccent else if (unread || flagged) HubAccent.copy(alpha = .6f) else palette.border,
                 RoundedCornerShape(16.dp),
             )
-            .clickable {
-                activateHubItem(context, item, onMarkRead, onToggleReply)
-            },
+            .combinedClickable(
+                onClick = { activateHubItem(context, item, onMarkRead, onToggleReply) },
+                onLongClick = onLongPress,
+            ),
     ) {
         Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(

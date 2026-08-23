@@ -31,8 +31,8 @@ android {
         applicationId = "com.astroboii47.commander"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.1.0-alpha.3.1"
+        versionCode = 5
+        versionName = "0.1.0-alpha.4"
     }
 
     signingConfigs {
