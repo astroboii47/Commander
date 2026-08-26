@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-alpha.4.1
+
+- Added a unified Hub actions menu with Open, Reply, Dismiss, app-provided notification actions, and notification ignore controls.
+- Added keyboard access to Hub actions with P, arrow-key navigation, Enter or O to activate, and U to return to the Hub list.
+- Added destructive-action confirmation for actions such as Delete.
+- Added selected-action glow feedback and Commander success or error states for notification actions.
+- Added Hub navigation, launch, and confirmation sounds using the existing Commander sound and volume settings.
+- Added adaptive scrolling for long Hub action lists so every option remains visible on smaller displays.
+- Added support for returning to Hub after opening a notification destination where Android permits normal caller navigation.
+- Added conservative notification deduplication for equivalent group headers, message rows, and missed-call notifications.
+- Added suppression of short-lived action receipts such as "message archived" after the result is confirmed inside Commander.
+- Improved Todoist reminder titles so Hub shows the task name when Todoist supplies it.
+- Improved plain-text Tasker aliases so exact tasks are ranked alongside apps and execute immediately when selected.
+
 ## 0.1.0-alpha.4
 
 - Added complete, keyboard-navigable result lists for apps, app shortcuts, Settings, aliases, Tasker tasks, files, folders, and contacts.

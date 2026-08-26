@@ -54,6 +54,14 @@ object TaskerAliases {
         }
     }
 
+    fun exactMatches(context: Context, input: String): List<TaskerAlias> {
+        val normalized = input.trim().lowercase()
+        if (normalized.isBlank() || normalized.contains(' ')) return emptyList()
+        return load(context).filter { item ->
+            TriggerSettings.effectiveAlias(item.alias.lowercase()) == normalized
+        }
+    }
+
     fun run(context: Context, item: TaskerAlias): String? {
         val installed = runCatching { context.packageManager.getPackageInfo(TASKER_PACKAGE, 0) }.isSuccess
         if (!installed) return "Tasker is not installed"

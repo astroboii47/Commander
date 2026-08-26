@@ -196,22 +196,36 @@ fun CommandOverlayApp(
     val settingsResults = remember(aliasMatch) {
         if (aliasMatch?.target?.id == "settings") engine.searchSystemSettings(aliasMatch.query) else emptyList()
     }
-    val aliasSuggestions = remember(query, AppSearchSettings.aliasSuggestions.value) {
+    val discoveredAliasSuggestions = remember(query, AppSearchSettings.aliasSuggestions.value) {
         AliasSettings.suggestions(engine.context, query)
+    }
+    val aliasSuggestions = remember(query, discoveredAliasSuggestions) {
+        val plainText = query.isNotBlank() && query.first().isLetterOrDigit() && !query.contains(' ')
+        if (plainText) discoveredAliasSuggestions.filter { it.alias.equals(query, ignoreCase = true) }
+        else discoveredAliasSuggestions
     }
     val shortcutQuery = remember(query, aliasSuggestions) {
         if (aliasSuggestions.isEmpty()) AppShortcutSettings.query(engine.context, query) else null
     }
-    val taskerResults = remember(query, aliasSuggestions) {
-        if (aliasSuggestions.isEmpty()) TaskerAliases.matches(engine.context, query) else emptyList()
+    val exactTaskerResults = remember(query) {
+        TaskerAliases.exactMatches(engine.context, query)
+    }
+    val taskerResults = remember(query, aliasSuggestions, exactTaskerResults) {
+        exactTaskerResults.ifEmpty {
+            if (aliasSuggestions.isEmpty()) TaskerAliases.matches(engine.context, query) else emptyList()
+        }
     }
     val calculatorResult = remember(parsed.kind, parsed.text) {
         if (parsed.kind == CommandKind.Calculator) engine.calculatorPreview(parsed.text) else null
     }
     val inGeminiConversation = askMessages.isNotEmpty()
     val activeKind = if (inGeminiConversation) CommandKind.Ask else selectedContactKind ?: parsed.kind
-    val baseApps = remember(query, activeKind, aliasMatch) {
-        if (activeKind == CommandKind.Apps && aliasMatch == null && aliasSuggestions.isEmpty()) engine.searchApps(parsed.text, Int.MAX_VALUE) else emptyList()
+    val plainAliasDiscovery = activeKind == CommandKind.Apps && query.isNotBlank() &&
+        query.first().isLetterOrDigit() && !query.contains(' ') && aliasSuggestions.isNotEmpty()
+    val baseApps = remember(query, activeKind, aliasMatch, plainAliasDiscovery) {
+        if (activeKind == CommandKind.Apps && aliasMatch == null && (aliasSuggestions.isEmpty() || plainAliasDiscovery)) {
+            engine.searchApps(parsed.text, Int.MAX_VALUE)
+        } else emptyList()
     }
     var apps by remember { mutableStateOf<List<AppResult>>(emptyList()) }
     var rawFiles by remember { mutableStateOf<List<FileResult>>(emptyList()) }
@@ -234,6 +248,8 @@ fun CommandOverlayApp(
         } else emptyList()
     }
     val actionReady = when {
+        plainAliasDiscovery -> aliasSuggestions.isNotEmpty() || apps.isNotEmpty()
+        taskerResults.isNotEmpty() -> true
         aliasSuggestions.isNotEmpty() -> true
         aliasMatch?.target?.id == "settings" -> settingsResults.isNotEmpty()
         shortcutQuery != null -> shortcutResults.isNotEmpty()
@@ -408,24 +424,64 @@ fun CommandOverlayApp(
         SoundFeedback.play(engine.context, if (error == null) CommandSound.Confirm else CommandSound.Error)
     }
 
+    fun runTaskerTask(task: TaskerAlias) {
+        if (executing) return
+        executing = true
+        scope.launch {
+            delay(135)
+            val error = TaskerAliases.run(engine.context, task)
+            executing = false
+            playOutcome(error)
+            notice = error ?: "task started · ${task.label}"
+        }
+    }
+
+    fun launchApp(app: AppResult) {
+        if (executing) return
+        executing = true
+        scope.launch {
+            delay(135)
+            val error = engine.execute(ParsedCommand(CommandKind.Apps, app.label), app)
+            executing = false
+            playOutcome(error)
+            if (error != null) notice = error
+        }
+    }
+
+    fun acceptAliasSuggestion(suggestion: AliasSuggestion, blockDuplicateEnter: Boolean) {
+        suggestion.taskerAlias?.let {
+            runTaskerTask(it)
+            return
+        }
+        if (blockDuplicateEnter) executeBlockedUntil = android.os.SystemClock.elapsedRealtime() + 300L
+        HomeTypingHandoff.finish()
+        SoundFeedback.play(engine.context, CommandSound.Step)
+        setEditorQuery("${suggestion.alias} ")
+        selectedIndex = 0
+        notice = null
+    }
+
     fun execute() {
         if (executing) return
         val now = android.os.SystemClock.elapsedRealtime()
         if (now < executeBlockedUntil) return
+        if (plainAliasDiscovery) {
+            if (selectedIndex < aliasSuggestions.size) {
+                aliasSuggestions.getOrNull(selectedIndex)?.let { acceptAliasSuggestion(it, true) }
+            } else {
+                apps.getOrNull(selectedIndex - aliasSuggestions.size)?.let(::launchApp)
+            }
+            return
+        }
+        if (taskerResults.isNotEmpty()) {
+            taskerResults.getOrNull(selectedIndex.coerceIn(0, taskerResults.lastIndex.coerceAtLeast(0)))?.let { task ->
+                runTaskerTask(task)
+            }
+            return
+        }
         if (aliasSuggestions.isNotEmpty()) {
             aliasSuggestions.getOrNull(selectedIndex.coerceIn(0, aliasSuggestions.lastIndex))?.let { suggestion ->
-                // Some physical-keyboard IMEs emit both Enter and editor Go.
-                // This press accepts the suggestion only; never let its second
-                // callback immediately execute the newly entered alias.
-                executeBlockedUntil = now + 300L
-                // Home typing may still have a delayed final value without
-                // the accepted trailing space. End that handoff before the
-                // local stage transition so it cannot restore the old alias.
-                HomeTypingHandoff.finish()
-                SoundFeedback.play(engine.context, CommandSound.Step)
-                setEditorQuery("${suggestion.alias} ")
-                selectedIndex = 0
-                notice = null
+                acceptAliasSuggestion(suggestion, true)
             }
             return
         }
@@ -453,19 +509,6 @@ fun CommandOverlayApp(
                     if (error == null) {
                         onDismiss()
                     } else notice = error
-                }
-            }
-            return
-        }
-        if (taskerResults.isNotEmpty()) {
-            taskerResults.getOrNull(selectedIndex.coerceIn(0, taskerResults.lastIndex.coerceAtLeast(0)))?.let { task ->
-                executing = true
-                scope.launch {
-                    delay(135)
-                    val error = TaskerAliases.run(engine.context, task)
-                    executing = false
-                    playOutcome(error)
-                    notice = error ?: "task started · ${task.label}"
                 }
             }
             return
@@ -715,11 +758,27 @@ fun CommandOverlayApp(
             } else {
             when {
                 notice != null -> OverlayNotice(notice!!, palette)
+                plainAliasDiscovery -> OverlayDiscoveryResults(
+                    suggestions = aliasSuggestions,
+                    apps = apps,
+                    selectedIndex = selectedIndex,
+                    visibleRowCount = maxVisibleResults,
+                    palette = palette,
+                    onVisibleAppIndicesChanged = { visibleAppIndices = it },
+                    onSuggestionClick = { acceptAliasSuggestion(it, false) },
+                    onAppClick = ::launchApp,
+                    onAppLongClick = { app ->
+                        if (engine.openAppInfo(app)) {
+                            SoundFeedback.play(engine.context, CommandSound.Step)
+                            onDismiss()
+                        }
+                    },
+                )
+                taskerResults.isNotEmpty() -> OverlayTaskerResults(taskerResults, selectedIndex, maxVisibleResults, palette) { task ->
+                    runTaskerTask(task)
+                }
                 aliasSuggestions.isNotEmpty() -> OverlayAliasSuggestions(aliasSuggestions, selectedIndex, maxVisibleResults, palette) { suggestion ->
-                    SoundFeedback.play(engine.context, CommandSound.Step)
-                    setEditorQuery("${suggestion.alias} ")
-                    selectedIndex = 0
-                    notice = null
+                    acceptAliasSuggestion(suggestion, false)
                 }
                 aliasMatch?.target?.id == "settings" -> OverlaySettingsResults(
                     settingsResults,
@@ -749,16 +808,6 @@ fun CommandOverlayApp(
                         if (error == null) {
                             onDismiss()
                         } else notice = error
-                    }
-                }
-                taskerResults.isNotEmpty() -> OverlayTaskerResults(taskerResults, selectedIndex, maxVisibleResults, palette) { task ->
-                    executing = true
-                    scope.launch {
-                        delay(135)
-                        val error = TaskerAliases.run(engine.context, task)
-                        executing = false
-                        playOutcome(error)
-                        notice = error ?: "task started · ${task.label}"
                     }
                 }
                 activeKind == CommandKind.Apps && query.isNotBlank() -> OverlayAppResults(
@@ -863,6 +912,10 @@ fun CommandOverlayApp(
                     } else Text(
                         text = "▸ ${when {
                             shortcutQuery != null -> "search app shortcuts"
+                            plainAliasDiscovery && selectedIndex < aliasSuggestions.size -> {
+                                if (aliasSuggestions.getOrNull(selectedIndex)?.taskerAlias != null) "run Tasker task" else "use search alias"
+                            }
+                            plainAliasDiscovery -> "open app"
                             taskerResults.isNotEmpty() -> "run Tasker task"
                             activeKind == CommandKind.Apps && apps.getOrNull(selectedIndex)?.packageName?.startsWith("internal:web-search:") == true -> "search web"
                             activeKind == CommandKind.Ask && query.startsWith("??") -> "ask ChatGPT"
@@ -1012,6 +1065,8 @@ fun CommandOverlayApp(
                                     val native = event.nativeKeyEvent
                                     val isBackspace = event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DEL
                                     val resultCount = when {
+                                        plainAliasDiscovery -> aliasSuggestions.size + apps.size
+                                        taskerResults.isNotEmpty() -> taskerResults.size
                                         aliasSuggestions.isNotEmpty() -> aliasSuggestions.size
                                         aliasMatch?.target?.id == "settings" -> settingsResults.size
                                         shortcutQuery != null -> shortcutResults.size
@@ -1074,10 +1129,15 @@ fun CommandOverlayApp(
                             textStyle = TextStyle(color = palette.text, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp),
                             cursorBrush = SolidColor(OverlayAccent),
                             visualTransformation = SentinelTransformation(when {
+                                plainAliasDiscovery && selectedIndex < aliasSuggestions.size -> AliasPrefixTransformation(
+                                    aliasSuggestions.getOrNull(selectedIndex)?.alias?.length ?: 0,
+                                )
+                                taskerResults.isNotEmpty() -> AliasPrefixTransformation(
+                                    TriggerSettings.effectiveAlias(taskerResults.first().alias).length,
+                                )
                                 aliasSuggestions.isNotEmpty() -> AliasPrefixTransformation(
                                     aliasSuggestions.getOrNull(selectedIndex)?.alias?.length ?: 0,
                                 )
-                                taskerResults.isNotEmpty() -> AliasPrefixTransformation(taskerResults.first().alias.length)
                                 shortcutQuery != null -> AliasPrefixTransformation(
                                     TriggerSettings.effectiveAlias(AppShortcutSettings.alias(engine.context)).length,
                                 )
@@ -1359,6 +1419,46 @@ private fun OverlayCompletion(text: String, palette: OverlayPalette, focusReques
 }
 
 @Composable
+private fun OverlayDiscoveryResults(
+    suggestions: List<AliasSuggestion>,
+    apps: List<AppResult>,
+    selectedIndex: Int,
+    visibleRowCount: Int,
+    palette: OverlayPalette,
+    onVisibleAppIndicesChanged: (List<Int>) -> Unit,
+    onSuggestionClick: (AliasSuggestion) -> Unit,
+    onAppClick: (AppResult) -> Unit,
+    onAppLongClick: (AppResult) -> Unit,
+) {
+    val listState = rememberLazyListState()
+    val total = suggestions.size + apps.size
+    LaunchedEffect(selectedIndex, suggestions.firstOrNull()?.alias, apps.firstOrNull()?.packageName, total) {
+        if (selectedIndex in 0 until total) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LaunchedEffect(listState, suggestions.size, apps.size) {
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.mapNotNull { visible ->
+                (visible.index - suggestions.size).takeIf { it in apps.indices }
+            }
+        }.distinctUntilChanged().collect(onVisibleAppIndicesChanged)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth().height(resultListHeight(total, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        itemsIndexed(suggestions, key = { index, suggestion -> "alias:${suggestion.alias}:${suggestion.label}:$index" }) { index, suggestion ->
+            OverlayAliasSuggestionRow(suggestion, index == selectedIndex, palette, onSuggestionClick)
+        }
+        itemsIndexed(apps, key = { index, app -> "app:${app.packageName}:$index" }) { index, app ->
+            val combinedIndex = suggestions.size + index
+            OverlayAppResultRow(app, combinedIndex == selectedIndex, palette, onAppClick, onAppLongClick)
+        }
+    }
+}
+
+@Composable
 private fun OverlayAppResults(
     apps: List<AppResult>,
     selectedIndex: Int,
@@ -1565,7 +1665,6 @@ private fun OverlayAliasSuggestions(
     palette: OverlayPalette,
     onClick: (AliasSuggestion) -> Unit,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
     val listState = rememberLazyListState()
     LaunchedEffect(selectedIndex, suggestions.firstOrNull()?.alias, suggestions.size) {
         if (selectedIndex in suggestions.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
@@ -1577,34 +1676,45 @@ private fun OverlayAliasSuggestions(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
     itemsIndexed(suggestions, key = { _, suggestion -> "${suggestion.alias}:${suggestion.subtitle}" }) { index, suggestion ->
-        val icon = remember(suggestion.packageName, suggestion.taskerAlias?.iconBase64) {
-            suggestion.taskerAlias?.let { TaskerAliases.icon(context, it) }
-                ?: suggestion.packageName?.let { packageName ->
-                    runCatching { context.packageManager.getApplicationIcon(packageName) }.getOrNull()
-                }
-        }
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
-                .background(if (index == selectedIndex) OverlayAccent.copy(alpha = .22f) else palette.tile)
-                .border(1.dp, if (index == selectedIndex) OverlayAccent else palette.border, RoundedCornerShape(15.dp))
-                .clickable { onClick(suggestion) }.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            RealAppIcon(icon, suggestion.label, palette, Modifier.size(42.dp))
-            Column(Modifier.padding(start = 13.dp).weight(1f)) {
-                Text(suggestion.label, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                Text(
-                    "${suggestion.alias}  ·  ${suggestion.subtitle}",
-                    color = OverlayAccent,
-                    fontFamily = OverlayMono,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
-        }
+        OverlayAliasSuggestionRow(suggestion, index == selectedIndex, palette, onClick)
     }
+    }
+}
+
+@Composable
+private fun OverlayAliasSuggestionRow(
+    suggestion: AliasSuggestion,
+    selected: Boolean,
+    palette: OverlayPalette,
+    onClick: (AliasSuggestion) -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val icon = remember(suggestion.packageName, suggestion.taskerAlias?.iconBase64) {
+        suggestion.taskerAlias?.let { TaskerAliases.icon(context, it) }
+            ?: suggestion.packageName?.let { packageName ->
+                runCatching { context.packageManager.getApplicationIcon(packageName) }.getOrNull()
+            }
+    }
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
+            .background(if (selected) OverlayAccent.copy(alpha = .22f) else palette.tile)
+            .border(1.dp, if (selected) OverlayAccent else palette.border, RoundedCornerShape(15.dp))
+            .clickable { onClick(suggestion) }.padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RealAppIcon(icon, suggestion.label, palette, Modifier.size(42.dp))
+        Column(Modifier.padding(start = 13.dp).weight(1f)) {
+            Text(suggestion.label, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Text(
+                "${suggestion.alias}  ·  ${suggestion.subtitle}",
+                color = OverlayAccent,
+                fontFamily = OverlayMono,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (selected) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
     }
 }
 

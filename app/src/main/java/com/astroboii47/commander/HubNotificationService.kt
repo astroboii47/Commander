@@ -25,9 +25,19 @@ data class HubItem(
     val category: String?,
     val contentIntent: PendingIntent?,
     val replyAction: HubReplyAction?,
+    val notificationActions: List<HubNotificationAction>,
     val isSummary: Boolean,
+    val isGroupHeader: Boolean,
     val channelId: String?,
     val shortcutId: String?,
+    val sourceKeys: Set<String>,
+)
+
+data class HubNotificationAction(
+    val title: String,
+    val pendingIntent: PendingIntent,
+    val semanticAction: Int,
+    val destructive: Boolean,
 )
 
 data class HubMessage(
@@ -54,6 +64,41 @@ object HubRepository {
     )
     private val sentReplies = mutableMapOf<String, MutableList<PendingReply>>()
     private val hiddenSummaryKeys = mutableSetOf<String>()
+    private data class PendingNotificationAction(val packageName: String, val phrases: Set<String>, val time: Long)
+    private val pendingNotificationActions = mutableListOf<PendingNotificationAction>()
+    private val suppressedActionConfirmationKeys = mutableMapOf<String, Long>()
+
+    fun recordNotificationAction(packageName: String, title: String) {
+        val action = title.trim().lowercase()
+        val phrases = when {
+            "archive" in action -> setOf("archived", "message archived", "conversation archived")
+            "delete" in action || "trash" in action -> setOf("deleted", "message deleted", "moved to trash")
+            "mark" in action && "read" in action -> setOf("marked as read", "message read")
+            "complete" in action || "done" in action -> setOf("completed", "marked complete", "task completed")
+            "snooze" in action -> setOf("snoozed")
+            else -> emptySet()
+        }
+        if (phrases.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            pendingNotificationActions.removeAll { now - it.time > ACTION_CONFIRMATION_WINDOW_MS }
+            pendingNotificationActions += PendingNotificationAction(packageName, phrases, now)
+        }
+    }
+
+    private fun consumeActionConfirmation(item: HubItem): Boolean {
+        val now = System.currentTimeMillis()
+        pendingNotificationActions.removeAll { now - it.time > ACTION_CONFIRMATION_WINDOW_MS }
+        suppressedActionConfirmationKeys.entries.removeAll { now - it.value > SUPPRESSED_CONFIRMATION_RETENTION_MS }
+        if (item.key in suppressedActionConfirmationKeys) return true
+        val content = "${item.title} ${item.text}".trim().lowercase()
+        val index = pendingNotificationActions.indexOfFirst { pending ->
+            pending.packageName == item.packageName && pending.phrases.any { it in content }
+        }
+        if (index < 0) return false
+        pendingNotificationActions.removeAt(index)
+        suppressedActionConfirmationKeys[item.key] = now
+        return true
+    }
 
     fun attachDismissHandler(handler: ((String) -> Unit)?) {
         dismissNotification = handler
@@ -68,9 +113,13 @@ object HubRepository {
     }
 
     fun dismiss(key: String) {
-        items = items.filterNot { it.key == key }
-        sentReplies.remove(key)
-        dismissNotification?.invoke(key)
+        val item = items.firstOrNull { it.key == key || key in it.sourceKeys }
+        val keys = item?.sourceKeys.orEmpty().ifEmpty { setOf(key) }
+        items = items.filterNot { it === item || it.key == key }
+        keys.forEach {
+            sentReplies.remove(it)
+            dismissNotification?.invoke(it)
+        }
     }
 
     fun dismiss(item: HubItem) {
@@ -78,7 +127,7 @@ object HubRepository {
             // Cancelling an Android group summary commonly cancels every child
             // notification too. Hide only Commander's aggregate row so the
             // individual notifications remain intact and actionable.
-            hiddenSummaryKeys += item.key
+            hiddenSummaryKeys += item.sourceKeys
             items = items.filterNot { it.key == item.key }
         } else {
             dismiss(item.key)
@@ -134,11 +183,13 @@ object HubRepository {
             .filter { !it.isOngoing }
             .onEach { it.discoverMessengerConversation(service) }
             .mapNotNull { it.toHubItem(service) }
+            .filterNot(::consumeActionConfirmation)
             .filterNot(HubIgnoreSettings::matches)
             .filterNot { it.isSummary && it.key in hiddenSummaryKeys }
             .map(::mergeSentReplies)
-            .sortedByDescending { it.time }
             .toList()
+            .let(::deduplicateNotifications)
+            .sortedByDescending { it.time }
     }
 
     fun upsert(notification: StatusBarNotification, service: NotificationListenerService) {
@@ -147,24 +198,38 @@ object HubRepository {
             return
         }
         notification.discoverMessengerConversation(service)
-        val converted = notification.toHubItem(service)?.takeUnless(HubIgnoreSettings::matches)?.let(::mergeSentReplies)
+        val converted = notification.toHubItem(service)?.takeUnless(::consumeActionConfirmation)
+            ?.takeUnless(HubIgnoreSettings::matches)?.let(::mergeSentReplies)
             ?.takeUnless { it.isSummary && it.key in hiddenSummaryKeys }
         items = if (converted == null) {
             items.filterNot { it.key == notification.key }
         } else {
-            (items.filterNot { it.key == notification.key } + converted).sortedByDescending(HubItem::time)
+            deduplicateNotifications(items.filterNot { notification.key in it.sourceKeys } + converted)
+                .sortedByDescending(HubItem::time)
         }
     }
 
     fun remove(key: String) {
-        items = items.filterNot { it.key == key }
+        items = items.mapNotNull { item ->
+            if (key !in item.sourceKeys) item else {
+                val remaining = item.sourceKeys - key
+                when {
+                    remaining.isEmpty() -> null
+                    item.key == key -> item.copy(key = remaining.first(), sourceKeys = remaining)
+                    else -> item.copy(sourceKeys = remaining)
+                }
+            }
+        }
         sentReplies.remove(key)
         hiddenSummaryKeys.remove(key)
+        suppressedActionConfirmationKeys.remove(key)
     }
 }
 
 private const val SENT_REPLY_RETENTION_MS = 10 * 60 * 1000L
 private const val SENT_REPLY_MATCH_WINDOW_MS = 2 * 60 * 1000L
+private const val ACTION_CONFIRMATION_WINDOW_MS = 5_000L
+private const val SUPPRESSED_CONFIRMATION_RETENTION_MS = 60_000L
 private fun String.normalizedReplyText(): String = trim().replace(Regex("\\s+"), " ")
 
 class HubNotificationService : NotificationListenerService() {
@@ -283,15 +348,92 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
             val inputList: List<RemoteInput> = action.remoteInputs?.filter { it.allowFreeFormInput }.orEmpty()
             if (inputList.isEmpty()) null else HubReplyAction(action.actionIntent, inputList.toTypedArray())
         },
+        notificationActions = notification.actions.orEmpty().mapNotNull { action ->
+            val label = action.title?.toString()?.trim().orEmpty()
+            val hasReplyInput = action.remoteInputs?.any { it.allowFreeFormInput } == true
+            if (label.isBlank() || hasReplyInput) null else HubNotificationAction(
+                title = label,
+                pendingIntent = action.actionIntent,
+                semanticAction = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) action.semanticAction else 0,
+                destructive = label.contains(Regex("delete|trash|remove", RegexOption.IGNORE_CASE)) ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && action.semanticAction == Notification.Action.SEMANTIC_ACTION_DELETE),
+            )
+        }.distinctBy { it.title.lowercase() },
         // Some apps, including Shopify, promote the newest ordinary
         // notification to Android's group header and set GROUP_SUMMARY on it.
         // Keep those useful rows in their normal category. The summaries tab
         // is reserved for rows whose content is actually aggregate.
         isSummary = isAggregateSummary,
+        isGroupHeader = hasSummaryFlag,
         channelId = notification.channelId,
         shortcutId = notification.shortcutId,
+        sourceKeys = setOf(key),
     )
 }
+
+private fun deduplicateNotifications(source: List<HubItem>): List<HubItem> {
+    val result = mutableListOf<HubItem>()
+    source.sortedByDescending(HubItem::time).forEach { candidate ->
+        val matchIndex = result.indexOfFirst { it.isSemanticDuplicateOf(candidate) }
+        if (matchIndex < 0) result += candidate
+        else result[matchIndex] = result[matchIndex].mergeDuplicate(candidate)
+    }
+    return result
+}
+
+private fun HubItem.isSemanticDuplicateOf(other: HubItem): Boolean {
+    if (packageName != other.packageName || isSummary != other.isSummary) return false
+    val sameGroupedEvent = isGroupHeader != other.isGroupHeader && channelId == other.channelId &&
+        kotlin.math.abs(time - other.time) <= SEMANTIC_POST_TIME_WINDOW_MS &&
+        listOf(title.semanticIdentity(), text.semanticIdentity()).sorted() ==
+        listOf(other.title.semanticIdentity(), other.text.semanticIdentity()).sorted()
+    if (sameGroupedEvent) return true
+    val thisShortcut = shortcutId?.takeIf(String::isNotBlank)
+    val otherShortcut = other.shortcutId?.takeIf(String::isNotBlank)
+    if (thisShortcut != null && otherShortcut != null && thisShortcut != otherShortcut) return false
+    val sameShortcut = thisShortcut != null && thisShortcut == otherShortcut
+    val sameConversationLabel = (conversationTitle ?: title).semanticIdentity() ==
+        (other.conversationTitle ?: other.title).semanticIdentity()
+    if (!sameShortcut && !sameConversationLabel) return false
+
+    val thisLatest = messages.lastOrNull()
+    val otherLatest = other.messages.lastOrNull()
+    val thisBody = (thisLatest?.text ?: text).normalizedReplyText()
+    val otherBody = (otherLatest?.text ?: other.text).normalizedReplyText()
+    if (thisBody.isBlank() || thisBody != otherBody) return false
+    if (thisLatest != null && otherLatest != null && thisLatest.outgoing != otherLatest.outgoing) return false
+
+    val thisMessageTime = thisLatest?.time
+    val otherMessageTime = otherLatest?.time
+    return if (thisMessageTime != null && otherMessageTime != null) {
+        kotlin.math.abs(thisMessageTime - otherMessageTime) <= SEMANTIC_MESSAGE_TIME_WINDOW_MS
+    } else {
+        kotlin.math.abs(time - other.time) <= SEMANTIC_POST_TIME_WINDOW_MS
+    }
+}
+
+private fun HubItem.mergeDuplicate(other: HubItem): HubItem {
+    val preferred = if (duplicateQuality() >= other.duplicateQuality()) this else other
+    val richerMessages = if (messages.size >= other.messages.size) messages else other.messages
+    return preferred.copy(
+        messages = richerMessages,
+        time = maxOf(time, other.time),
+        notificationActions = (preferred.notificationActions + other.notificationActions)
+            .distinctBy { it.title.lowercase() },
+        sourceKeys = sourceKeys + other.sourceKeys,
+    )
+}
+
+private fun HubItem.duplicateQuality(): Int =
+    (if (replyAction != null) 8 else 0) +
+        notificationActions.size.coerceAtMost(3) * 2 +
+        (if (contentIntent != null) 4 else 0) +
+        (if (!shortcutId.isNullOrBlank()) 2 else 0) +
+        messages.size.coerceAtMost(3)
+
+private fun String.semanticIdentity(): String = trim().lowercase().replace(Regex("\\s+"), " ")
+private const val SEMANTIC_MESSAGE_TIME_WINDOW_MS = 1_000L
+private const val SEMANTIC_POST_TIME_WINDOW_MS = 2_000L
 
 private val GROUP_SENDER_PREFIX = Regex("^[~～]?\\s*([^:\\n]{1,60}):\\s+")
 private const val FLAG_AUTOGROUP_SUMMARY = 0x400

@@ -102,6 +102,25 @@ private enum class HubFilter(val label: String) {
     All("all"), Messages("messages"), Calls("calls"), Email("email"), Finance("finance"), Tasks("tasks"), Apps("apps"), Flagged("flagged"), Summaries("summaries")
 }
 
+private sealed interface HubActionEntry {
+    val label: String
+    data object Open : HubActionEntry { override val label = "open" }
+    data object Reply : HubActionEntry { override val label = "reply" }
+    data class NotificationAction(val action: HubNotificationAction) : HubActionEntry { override val label = action.title }
+    data object Dismiss : HubActionEntry { override val label = "dismiss" }
+    data object IgnoreScope : HubActionEntry { override val label = "ignore this type or conversation" }
+    data object IgnoreApp : HubActionEntry { override val label = "ignore everything from this app" }
+}
+
+private fun HubItem.actionEntries(): List<HubActionEntry> = buildList {
+    add(HubActionEntry.Open)
+    if (replyAction != null) add(HubActionEntry.Reply)
+    notificationActions.forEach { add(HubActionEntry.NotificationAction(it)) }
+    add(HubActionEntry.Dismiss)
+    if (!shortcutId.isNullOrBlank() || !conversationTitle.isNullOrBlank() || !channelId.isNullOrBlank()) add(HubActionEntry.IgnoreScope)
+    add(HubActionEntry.IgnoreApp)
+}
+
 @Composable
 fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss: () -> Unit) {
     val nightMode = LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
@@ -128,7 +147,11 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
     var replyItemSnapshot by remember { mutableStateOf<HubItem?>(null) }
     var replyText by remember { mutableStateOf("") }
     var replyStatus by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var ignorePrompt by remember { mutableStateOf<HubItem?>(null) }
+    var actionPrompt by remember { mutableStateOf<HubItem?>(null) }
+    var actionMenuIndex by remember { mutableStateOf(0) }
+    var actionConfirmation by remember { mutableStateOf<HubNotificationAction?>(null) }
+    var actionResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    var actionExecuting by remember { mutableStateOf<String?>(null) }
     var selectedIndex by remember { mutableStateOf(0) }
     var keyboardBrowsing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -179,28 +202,152 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
         }.apply()
     }
 
-    DisposableEffect(visible, filter, replyKey, HubSettings.quickKeyboardNavigation.value) {
+    fun openActions(item: HubItem) {
+        markRead(item)
+        SoundFeedback.play(context, CommandSound.Open)
+        actionPrompt = item
+        actionMenuIndex = 0
+        actionConfirmation = null
+        actionResult = null
+        actionExecuting = null
+    }
+    fun performAction(item: HubItem, entry: HubActionEntry) {
+        when (entry) {
+            HubActionEntry.Open -> {
+                actionPrompt = null
+                openHubItem(context, item) { markRead(item) }
+            }
+            HubActionEntry.Reply -> {
+                actionExecuting = entry.label
+                scope.launch {
+                    delay(360)
+                    actionExecuting = null
+                    actionPrompt = null
+                    SoundFeedback.play(context, CommandSound.Open)
+                    replyKey = item.key
+                    replyItemSnapshot = item
+                    replyText = ""
+                    replyStatus = null
+                }
+            }
+            is HubActionEntry.NotificationAction -> {
+                if (entry.action.destructive && actionConfirmation != entry.action) {
+                    actionConfirmation = entry.action
+                } else {
+                    actionConfirmation = null
+                    actionExecuting = entry.label
+                    scope.launch {
+                        // Draw the selected-action pulse before invoking the
+                        // originating app, which may update/remove its row in
+                        // the same frame as PendingIntent.send().
+                        delay(110)
+                        val sent = entry.action.send(context)
+                        if (sent) {
+                            HubRepository.recordNotificationAction(item.packageName, entry.action.title)
+                            SoundFeedback.play(context, CommandSound.Confirm)
+                            delay(310)
+                            actionExecuting = null
+                            actionResult = true to entry.action.successLabel()
+                            delay(850)
+                            actionPrompt = null
+                            actionResult = null
+                            HubRepository.requestRefresh()
+                        } else {
+                            actionExecuting = null
+                            actionResult = false to "couldn't ${entry.action.title.lowercase()}"
+                            SoundFeedback.play(context, CommandSound.Error)
+                        }
+                    }
+                }
+            }
+            HubActionEntry.Dismiss -> {
+                actionExecuting = entry.label
+                scope.launch {
+                    delay(360); HubRepository.dismiss(item); SoundFeedback.play(context, CommandSound.Confirm)
+                    actionPrompt = null; actionExecuting = null
+                }
+            }
+            HubActionEntry.IgnoreScope -> {
+                actionExecuting = entry.label
+                scope.launch {
+                    delay(360)
+                    if (HubIgnoreSettings.ignoreScope(context, item)) {
+                        HubRepository.applyIgnoreRules(); SoundFeedback.play(context, CommandSound.Confirm)
+                    }
+                    actionPrompt = null; actionExecuting = null
+                }
+            }
+            HubActionEntry.IgnoreApp -> {
+                actionExecuting = entry.label
+                scope.launch {
+                    delay(360)
+                    HubIgnoreSettings.ignoreApp(context, item); HubRepository.applyIgnoreRules()
+                    SoundFeedback.play(context, CommandSound.Confirm)
+                    actionPrompt = null; actionExecuting = null
+                }
+            }
+        }
+    }
+
+    DisposableEffect(visible, filter, replyKey, actionPrompt, actionMenuIndex, HubSettings.quickKeyboardNavigation.value) {
         HubKeyBridge.navigate = navigate@{ keyCode ->
+            actionPrompt?.let { item ->
+                if (actionResult != null || actionExecuting != null) return@navigate true
+                val entries = item.actionEntries()
+                return@navigate when (keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_UP, android.view.KeyEvent.KEYCODE_I -> {
+                        val next = (actionMenuIndex - 1).coerceAtLeast(0)
+                        if (next != actionMenuIndex) SoundFeedback.play(context, CommandSound.Step)
+                        actionMenuIndex = next; true
+                    }
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN, android.view.KeyEvent.KEYCODE_K -> {
+                        val next = (actionMenuIndex + 1).coerceAtMost(entries.lastIndex)
+                        if (next != actionMenuIndex) SoundFeedback.play(context, CommandSound.Step)
+                        actionMenuIndex = next; true
+                    }
+                    android.view.KeyEvent.KEYCODE_ENTER, android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                    android.view.KeyEvent.KEYCODE_O -> {
+                        entries.getOrNull(actionMenuIndex)?.let { performAction(item, it) }; true
+                    }
+                    android.view.KeyEvent.KEYCODE_U -> {
+                        actionPrompt = null
+                        actionConfirmation = null
+                        actionResult = null
+                        true
+                    }
+                    else -> false
+                }
+            }
             if (replyKey != null || managing) return@navigate false
             val quick = HubSettings.quickKeyboardNavigation.value
             when (keyCode) {
                 android.view.KeyEvent.KEYCODE_DPAD_UP,
                 android.view.KeyEvent.KEYCODE_I.takeIf { quick } -> {
                     keyboardBrowsing = true
-                    if (visible.isNotEmpty()) selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
+                    if (visible.isNotEmpty()) {
+                        val next = (selectedIndex - 1).coerceAtLeast(0)
+                        if (next != selectedIndex) SoundFeedback.play(context, CommandSound.Step)
+                        selectedIndex = next
+                    }
                     true
                 }
                 android.view.KeyEvent.KEYCODE_DPAD_DOWN,
                 android.view.KeyEvent.KEYCODE_K.takeIf { quick } -> {
                     keyboardBrowsing = true
-                    if (visible.isNotEmpty()) selectedIndex = (selectedIndex + 1).coerceAtMost(visible.lastIndex)
+                    if (visible.isNotEmpty()) {
+                        val next = (selectedIndex + 1).coerceAtMost(visible.lastIndex)
+                        if (next != selectedIndex) SoundFeedback.play(context, CommandSound.Step)
+                        selectedIndex = next
+                    }
                     true
                 }
                 android.view.KeyEvent.KEYCODE_DPAD_LEFT,
                 android.view.KeyEvent.KEYCODE_J.takeIf { quick } -> {
                     keyboardBrowsing = true
                     val index = filters.indexOf(filter).coerceAtLeast(0)
-                    filter = filters[(index - 1).coerceAtLeast(0)]
+                    val next = (index - 1).coerceAtLeast(0)
+                    if (next != index) SoundFeedback.play(context, CommandSound.Step)
+                    filter = filters[next]
                     selectedIndex = 0
                     true
                 }
@@ -208,7 +355,9 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 android.view.KeyEvent.KEYCODE_L.takeIf { quick } -> {
                     keyboardBrowsing = true
                     val index = filters.indexOf(filter).coerceAtLeast(0)
-                    filter = filters[(index + 1).coerceAtMost(filters.lastIndex)]
+                    val next = (index + 1).coerceAtMost(filters.lastIndex)
+                    if (next != index) SoundFeedback.play(context, CommandSound.Step)
+                    filter = filters[next]
                     selectedIndex = 0
                     true
                 }
@@ -228,7 +377,14 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     visible.isNotEmpty()
                 }
                 android.view.KeyEvent.KEYCODE_U.takeIf { quick } -> {
-                    visible.getOrNull(selectedIndex)?.let(HubRepository::dismiss)
+                    visible.getOrNull(selectedIndex)?.let {
+                        HubRepository.dismiss(it)
+                        SoundFeedback.play(context, CommandSound.Confirm)
+                    }
+                    visible.isNotEmpty()
+                }
+                android.view.KeyEvent.KEYCODE_P -> {
+                    visible.getOrNull(selectedIndex)?.let(::openActions)
                     visible.isNotEmpty()
                 }
                 else -> false
@@ -354,7 +510,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                                     replyText = replyText,
                                     replyStatus = replyStatus?.takeIf { it.first == item.key }?.second,
                                     onToggleFlag = { toggleFlag(item.key) },
-                                    onLongPress = { ignorePrompt = item },
+                                    onLongPress = { openActions(item) },
                                     onMarkRead = { markRead(item) },
                                     onToggleReply = {
                                         markRead(item)
@@ -430,22 +586,18 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 },
             )
         }
-        ignorePrompt?.let { item ->
-            HubIgnorePrompt(
+        actionPrompt?.let { item ->
+            HubActionsPrompt(
                 item = item,
                 palette = palette,
-                onDismiss = { ignorePrompt = null },
-                onIgnoreScope = {
-                    if (HubIgnoreSettings.ignoreScope(context, item)) {
-                        HubRepository.applyIgnoreRules()
-                        ignorePrompt = null
-                    }
-                },
-                onIgnoreApp = {
-                    HubIgnoreSettings.ignoreApp(context, item)
-                    HubRepository.applyIgnoreRules()
-                    ignorePrompt = null
-                },
+                entries = item.actionEntries(),
+                selectedIndex = actionMenuIndex,
+                confirmation = actionConfirmation,
+                result = actionResult,
+                executing = actionExecuting,
+                onDismiss = { actionPrompt = null; actionConfirmation = null; actionExecuting = null; actionResult = null },
+                onSelect = { actionMenuIndex = it; actionConfirmation = null },
+                onActivate = { performAction(item, it) },
             )
         }
     }
@@ -623,13 +775,20 @@ private fun HubIgnoredManager(
 }
 
 @Composable
-private fun HubIgnorePrompt(
+private fun HubActionsPrompt(
     item: HubItem,
     palette: HubPalette,
+    entries: List<HubActionEntry>,
+    selectedIndex: Int,
+    confirmation: HubNotificationAction?,
+    result: Pair<Boolean, String>?,
+    executing: String?,
     onDismiss: () -> Unit,
-    onIgnoreScope: () -> Unit,
-    onIgnoreApp: () -> Unit,
+    onSelect: (Int) -> Unit,
+    onActivate: (HubActionEntry) -> Unit,
 ) {
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val actionListMaxHeight = (screenHeight - 190.dp).coerceIn(150.dp, 430.dp)
     BackHandler(onBack = onDismiss)
     Box(
         Modifier.fillMaxSize().background(Color.Black.copy(alpha = .68f)).clickable(onClick = onDismiss),
@@ -641,27 +800,80 @@ private fun HubIgnorePrompt(
                 .border(1.dp, HubAccent.copy(alpha = .72f), RoundedCornerShape(22.dp))
                 .clickable(enabled = false) {}.padding(18.dp),
         ) {
-            Text("ignore notification", color = palette.secondary, fontFamily = HubMono, fontSize = 11.sp)
-            Text(item.primaryHubTitle(), color = palette.text, fontFamily = HubSerif, fontSize = 27.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(16.dp))
-            if (!item.shortcutId.isNullOrBlank() || !item.conversationTitle.isNullOrBlank() || !item.channelId.isNullOrBlank()) {
-                HubIgnoreChoice("ignore this type or conversation", "keep other ${item.appName} notifications", palette, onIgnoreScope)
-                Spacer(Modifier.height(9.dp))
+            if (result != null) {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp))
+                        .background(HubAccent.copy(alpha = if (result.first) .18f else .08f))
+                        .border(1.dp, HubAccent.copy(alpha = .82f), RoundedCornerShape(17.dp))
+                        .padding(horizontal = 15.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(31.dp).clip(CircleShape).background(HubAccent), contentAlignment = Alignment.Center) {
+                        Text(if (result.first) "✓" else "!", color = Color.White, fontFamily = HubSans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    }
+                    Text(result.second, Modifier.padding(start = 12.dp), color = palette.text, fontFamily = HubSerif, fontSize = 25.sp)
+                }
+            } else {
+                Text("notification actions", color = palette.secondary, fontFamily = HubMono, fontSize = 11.sp)
+                Text(item.primaryHubTitle(), color = palette.text, fontFamily = HubSerif, fontSize = 27.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(16.dp))
+                Column(Modifier.heightIn(max = actionListMaxHeight).verticalScroll(rememberScrollState())) {
+                entries.forEachIndexed { index, entry ->
+                    val bringIntoViewRequester = remember(item.key, index) { BringIntoViewRequester() }
+                    LaunchedEffect(index == selectedIndex) {
+                        if (index == selectedIndex) bringIntoViewRequester.bringIntoView()
+                    }
+                    if (index > 0) Spacer(Modifier.height(8.dp))
+                    val subtitle = when (entry) {
+                        HubActionEntry.Open -> "open ${item.appName}"
+                        HubActionEntry.Reply -> "reply without leaving Hub"
+                        is HubActionEntry.NotificationAction -> if (entry.action.destructive && confirmation == entry.action) "press again to confirm" else "action provided by ${item.appName}"
+                        HubActionEntry.Dismiss -> "remove this notification"
+                        HubActionEntry.IgnoreScope -> "keep other ${item.appName} notifications"
+                        HubActionEntry.IgnoreApp -> "hide the entire app from Hub"
+                    }
+                    HubActionChoice(entry.label.lowercase(), subtitle, palette, index == selectedIndex,
+                        modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester),
+                        confirm = entry is HubActionEntry.NotificationAction && entry.action.destructive && confirmation == entry.action,
+                        active = entry.label == executing) {
+                        onSelect(index)
+                        onActivate(entry)
+                    }
+                }
             }
-            HubIgnoreChoice("ignore everything from ${item.appName}", "hide the entire app from Hub", palette, onIgnoreApp)
+            }
             Text("tap outside to cancel", color = palette.secondary, fontFamily = HubMono, fontSize = 10.sp, modifier = Modifier.align(Alignment.End).padding(top = 12.dp))
         }
     }
 }
 
 @Composable
-private fun HubIgnoreChoice(title: String, subtitle: String, palette: HubPalette, onClick: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(palette.tile)
-            .border(1.dp, palette.border, RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(13.dp),
-    ) {
-        Text(title, color = palette.text, fontFamily = HubSans, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        Text(subtitle, color = palette.secondary, fontFamily = HubMono, fontSize = 10.sp, modifier = Modifier.padding(top = 3.dp))
+private fun HubActionChoice(
+    title: String,
+    subtitle: String,
+    palette: HubPalette,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    confirm: Boolean,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(modifier.fillMaxWidth()) {
+        if (active) {
+            Box(
+                Modifier.matchParentSize().blur(13.dp, BlurredEdgeTreatment.Unbounded)
+                    .clip(RoundedCornerShape(14.dp)).background(HubAccent.copy(alpha = .48f)),
+            )
+        }
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(if (active) HubAccent.copy(alpha = .32f).compositeOver(palette.tile) else palette.tile)
+                .border(if (selected || active) 2.dp else 1.dp, if (selected || active) HubAccent else palette.border, RoundedCornerShape(14.dp))
+                .clickable(enabled = !active, onClick = onClick).padding(13.dp),
+        ) {
+            Text(title, color = if (confirm) HubAccent else palette.text, fontFamily = HubSans, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(subtitle, color = if (confirm) HubAccent else palette.secondary, fontFamily = HubMono, fontSize = 10.sp, modifier = Modifier.padding(top = 3.dp))
+        }
     }
 }
 
@@ -816,10 +1028,16 @@ private fun HubNotificationCard(
 
 private fun activateHubItem(context: android.content.Context, item: HubItem, onMarkRead: () -> Unit, onReply: () -> Unit) {
     if (item.replyAction != null) {
+        SoundFeedback.play(context, CommandSound.Open)
         onReply()
         return
     }
+    openHubItem(context, item, onMarkRead)
+}
+
+private fun openHubItem(context: android.content.Context, item: HubItem, onMarkRead: () -> Unit) {
     onMarkRead()
+    SoundFeedback.play(context, CommandSound.Open)
     val openedNotification = item.contentIntent?.let { pending ->
         runCatching {
             val options = ActivityOptions.makeBasic().apply {
@@ -827,7 +1045,12 @@ private fun activateHubItem(context: android.content.Context, item: HubItem, onM
                     pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
                 }
             }
-            pending.send(context, 0, null, null, null, null, options.toBundle())
+            val activity = context as? android.app.Activity
+            if (activity != null) {
+                activity.startIntentSenderForResult(pending.intentSender, HUB_OPEN_REQUEST_CODE, null, 0, 0, 0, options.toBundle())
+            } else {
+                pending.send(context, 0, null, null, null, null, options.toBundle())
+            }
             true
         }.getOrDefault(false)
     } ?: false
@@ -837,6 +1060,30 @@ private fun activateHubItem(context: android.content.Context, item: HubItem, onM
                 addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }?.let(context::startActivity)
         }
+    }
+}
+
+private fun HubNotificationAction.send(context: android.content.Context): Boolean = runCatching {
+    val options = ActivityOptions.makeBasic().apply {
+        if (Build.VERSION.SDK_INT >= 34) {
+            pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+        }
+    }
+    pendingIntent.send(context, 0, null, null, null, null, options.toBundle())
+    true
+}.getOrDefault(false)
+
+private const val HUB_OPEN_REQUEST_CODE = 4701
+
+private fun HubNotificationAction.successLabel(): String {
+    val action = title.trim().lowercase()
+    return when {
+        "archive" in action -> "email archived"
+        "delete" in action || "trash" in action -> "notification deleted"
+        "mark" in action && "read" in action -> "marked as read"
+        "complete" in action || "done" in action -> "task completed"
+        "snooze" in action -> "notification snoozed"
+        else -> "$action complete"
     }
 }
 
@@ -896,6 +1143,6 @@ private fun HubItem.isLowPriority(): Boolean = category == Notification.CATEGORY
 
 private fun HubItem.primaryHubTitle(): String = when {
     isMessage() -> conversationTitle ?: title
-    isCall() || isEmail() -> title
+    isCall() || isEmail() || isTask() -> title
     else -> appName
 }
