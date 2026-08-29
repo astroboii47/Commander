@@ -2,18 +2,46 @@
 
 ## 0.1.0-alpha.5
 
-- Added a native Todoist Tasks view for today's and overdue tasks, with filtering, keyboard navigation, due dates and times, project and priority details, direct completion, and Todoist hand-off.
-- Added Quick Controls for flashlight, rotation, brightness, volume, media, ringer mode, theme, screen recording, QR scanning, caffeine, screen dimming, Mini Mode, Scroll Assistant, and battery protection where supported.
-- Added All Apps, Recent Apps, and App Switcher views with keyboard filtering, live previews, app icons, and swipe-up dismissal from the switcher.
+### Added
+
+- Added a native Todoist Tasks view that opens directly from the searchable Tasks result or the `tasks ` command.
+- Added separate Today and Overdue sections with task counts, live text filtering, project names, labels, priorities, recurring indicators, due dates, and scheduled times.
+- Added keyboard-first task actions. Arrow keys navigate, Enter completes the selected task, and Shift+Enter opens it in Todoist.
+- Added task-card completion feedback with an accent glow and checked state before the completed task leaves the list.
+- Added Quick Controls for flashlight, rotation, brightness, volume, media playback, ringer mode, theme, screen recording, QR scanning, caffeine, screen dimming, Mini Mode, Scroll Assistant, and battery protection where supported.
+- Added typed Quick Control values and modes, including brightness percentage or auto, volume percentage, ringer state, theme state, and battery protection level.
+- Added All Apps and Recent Apps views with searchable, fully navigable app lists.
+- Added App Switcher with recent-task previews, app-name filtering, Left and Right navigation, Enter to switch, and swipe up to close a task.
 - Added a keyboard-driven file actions menu with Open, Open in app, Preview, Reveal in folder, File info, and Delete.
-- Added file-type icons and viewport-aware preview loading for long file and folder result lists.
-- Added app-provided notification actions, Snooze, matching action icons, inline action feedback, and keyboard shortcuts throughout Commander Hub.
-- Added expandable Hub notification details, notification profile images, optional accent tinting, swipe-to-flag, and improved notification metadata alignment.
-- Added minimal scroll indicators for long Hub lists and fixed category clipping on smaller displays.
-- Improved Hub notification title extraction, deduplication, reply continuity, action-menu sizing, and return-to-Hub behaviour.
+- Added file-type icons for documents, PDFs, ebooks, audio, video, code, spreadsheets, presentations, folders, and generic files.
+- Added app-provided notification actions and Android Snooze support to Commander Hub, with matching icons and keyboard navigation.
+- Added expandable Hub notification details for longer messages, emails, and notifications.
+- Added notification profile images and notification-supplied icons, with optional circular presentation, accent tinting, and left or right placement.
+- Added swipe-right flagging, inline Hub action confirmation, and Commander sound feedback for navigation and completed actions.
+- Added minimal scroll indicators for long Hub lists.
+
+### Improved
+
+- Improved Quick Control state feedback so successful toggles remain visible and repeatable without consuming the command text.
+- Improved App Switcher preview caching and task ordering for faster repeated launches and more natural app switching.
+- Improved file and folder preview loading so newly visible rows populate as the list scrolls without loading every result at once.
 - Improved plain Tasker aliases so partial matches rank naturally alongside apps and exact matches run immediately.
-- Fixed keyboard navigation and selection visibility across long result lists, action menus, Tasks, and App Switcher.
-- Fixed filtered task rows being clipped, shifting due-date columns, and command-bar completion feedback appearing during task completion.
+- Improved Hub notification title and app-name extraction for weather, Todoist, messaging, email, and other expanded notification layouts.
+- Improved Hub deduplication for group summaries, updated notifications, missed calls, and notifications changed by flagging or app-provided actions.
+- Improved Hub reply continuity so supported conversations can remain open after sending when the source notification is replaced.
+- Improved Hub layout alignment for headers, timestamps, app names, unread indicators, icons, expanded content, and action menus.
+- Improved return-to-Hub behaviour after opening notification destinations where Android preserves the caller task.
+
+### Fixed
+
+- Fixed keyboard navigation and selection visibility across long app, shortcut, alias, Settings, file, action, Tasks, Hub, and App Switcher lists.
+- Fixed Hub category tabs and bottom rows being clipped on smaller displays.
+- Fixed action menus with many entries clipping their final action.
+- Fixed App Switcher dismissal leaving empty gaps and excluded hidden system tasks from normal results.
+- Fixed file actions losing the previous query and selection when returning from previews or external apps.
+- Fixed filtered Todoist results being vertically clipped when only one or a few tasks matched.
+- Fixed selected task rows shifting their due-date column when the Enter indicator moved between rows.
+- Fixed task completion using the command-bar confirmation glow instead of the selected task card.
 
 ## 0.1.0-alpha.4.1
 
