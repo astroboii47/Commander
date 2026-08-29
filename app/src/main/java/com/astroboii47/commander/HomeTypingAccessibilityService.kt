@@ -126,6 +126,7 @@ class HomeTypingAccessibilityService : AccessibilityService() {
         }
     }
 
+
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (!HomeTypingSettings.enabled.value) return false
         if (event.action == KeyEvent.ACTION_UP) {
@@ -243,5 +244,6 @@ class HomeTypingAccessibilityService : AccessibilityService() {
         }
 
         fun isConnected(): Boolean = activeService?.get() != null
+
     }
 }

@@ -44,6 +44,11 @@ object AppCatalog {
             .toList()
     }
 
+    fun all(context: Context): List<AppCatalogEntry> {
+        initialize(context)
+        return entriesState.value
+    }
+
     fun settingsEntries(context: Context, query: String, limit: Int = 8): List<AppCatalogEntry> {
         initialize(context)
         val saved = AppSearchTerms.aliases(context).keys

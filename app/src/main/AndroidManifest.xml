@@ -3,9 +3,12 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
 
     <queries>
         <intent>
@@ -37,6 +40,10 @@
         <package android:name="org.mozilla.focus" />
         <package android:name="company.thebrowser.arc" />
         <package android:name="com.amazon.mShop.android.shopping" />
+        <package android:name="moe.zhs.caffeine" />
+        <package android:name="com.github.ericytsang.screenfilter.app.android" />
+        <package android:name="com.android.systemui" />
+        <package android:name="com.google.android.gms" />
     </queries>
 
     <application
@@ -46,6 +53,13 @@
         android:label="Commander"
         android:supportsRtl="true"
         android:theme="@style/Theme.MinimalCommand">
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <activity
             android:name=".SettingsActivity"
             android:exported="true"
@@ -81,6 +95,7 @@
         </activity-alias>
         <activity
             android:name=".OverlayActivity"
+            android:configChanges="density|keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize"
             android:excludeFromRecents="true"
             android:exported="true"
             android:finishOnTaskLaunch="true"
@@ -89,6 +104,23 @@
             android:theme="@style/Theme.MinimalCommand.Overlay">
             <intent-filter>
                 <action android:name="com.astroboii47.commander.OPEN_OVERLAY" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".SwitcherActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_bar"
+            android:label="App Switcher"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.MinimalCommand.Overlay">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.astroboii47.commander.OPEN_SWITCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

@@ -18,6 +18,7 @@ import android.os.Environment
 import android.os.StrictMode
 import android.provider.Settings
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.telephony.SmsManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -70,6 +71,12 @@ class CommandEngine(private val activity: Activity) {
 
     fun searchApps(query: String, limit: Int = 7): List<AppResult> {
         val needle = query.trim().lowercase()
+        if (needle == "all") {
+            return listOf(AppResult("All apps", INTERNAL_ALL_APPS, null))
+        }
+        if (needle == "rec" || needle == "recents") {
+            return listOf(AppResult("Recent apps", INTERNAL_RECENT_APPS, null))
+        }
         val destinations = buildList {
             if ("commander hub".contains(needle) || "hub".startsWith(needle)) {
                 add(AppResult("Commander Hub", INTERNAL_HUB, null))
@@ -80,6 +87,12 @@ class CommandEngine(private val activity: Activity) {
             if ("commander settings".contains(needle) || "settings".startsWith(needle)) {
                 add(AppResult("Commander Settings", INTERNAL_SETTINGS, null))
             }
+            if ("switcher".startsWith(needle) || "app switcher".contains(needle)) {
+                add(AppResult("App Switcher", INTERNAL_SWITCHER, null))
+            }
+            if ("tasks".startsWith(needle) || "todoist tasks".contains(needle)) {
+                add(AppResult("Tasks", INTERNAL_TASKS, null))
+            }
         }
         val matches = (destinations + AppCatalog.search(activity.applicationContext, query, limit).map {
             AppResult(label = it.label, packageName = it.packageName, icon = null)
@@ -89,12 +102,38 @@ class CommandEngine(private val activity: Activity) {
         } else matches
     }
 
+    fun allApps(query: String, limit: Int = Int.MAX_VALUE): List<AppResult> {
+        val needle = query.trim().lowercase()
+        return AppCatalog.all(activity.applicationContext).asSequence()
+            .filter { needle.isBlank() || needle in it.searchable }
+            .take(limit)
+            .map { AppResult(it.label, it.packageName, null) }
+            .toList()
+    }
+
+    fun commanderRecents(query: String, limit: Int = 10): List<AppResult> {
+        val needle = query.trim().lowercase()
+        return recentApps(10).filter {
+            needle.isBlank() || needle in it.label.lowercase() || needle in it.packageName.lowercase()
+        }.take(limit)
+    }
+
+    private fun recentApps(limit: Int): List<AppResult> {
+        val launchable = AppCatalog.all(activity.applicationContext).associateBy { it.packageName }
+        return AppLaunchHistory.packages(activity.applicationContext)
+            .mapNotNull(launchable::get)
+            .take(limit.coerceAtMost(10))
+            .map { AppResult(it.label, it.packageName, null) }
+    }
+
     fun loadVisibleAppIcons(apps: List<AppResult>): List<AppResult> {
         return apps.map { app ->
             val icon = when (app.packageName) {
                 INTERNAL_HOME -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_home)
             INTERNAL_SETTINGS -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_bar)
-            INTERNAL_HUB -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_hub)
+                INTERNAL_HUB -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_hub)
+            INTERNAL_ALL_APPS, INTERNAL_RECENT_APPS -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_bar)
+            INTERNAL_SWITCHER -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_bar)
             else -> if (app.packageName.startsWith(INTERNAL_WEB)) null else AppIconOverrides.load(activity, app.packageName)
                     ?: runCatching { packageManager.getApplicationIcon(app.packageName) }.getOrNull()
             }
@@ -225,6 +264,66 @@ class CommandEngine(private val activity: Activity) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         return startOrFallback(intent, null, "No app can open this file")
+    }
+
+    fun openFileWith(file: FileResult): String? {
+        if (file.isDirectory) return openFolder(file)
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(file.uri, file.mimeType ?: "*/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return startOrFallback(Intent.createChooser(view, "Open ${file.name} with"), null, "No app can open this file")
+    }
+
+    fun revealFile(file: FileResult): String? {
+        val path = file.location.trim('/')
+        if (path.isBlank()) return "Containing folder is unavailable"
+        val folder = FileResult(
+            name = path.substringAfterLast('/'),
+            uri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:$path"),
+            mimeType = DocumentsContract.Document.MIME_TYPE_DIR,
+            location = path.substringBeforeLast('/', "Internal storage"),
+            isDirectory = true,
+        )
+        return openFolder(folder)
+    }
+
+    fun fileInfo(file: FileResult): String {
+        var size: Long? = null
+        if (!file.isDirectory) runCatching {
+            activity.contentResolver.query(file.uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) size = cursor.getLong(0)
+            }
+        }
+        val details = buildList {
+            add(if (file.isDirectory) "Folder" else file.mimeType ?: "File")
+            size?.let { add(formatFileSize(it)) }
+            if (file.location.isNotBlank()) add(file.location)
+            if (file.modifiedAtMillis > 0L) add(java.text.DateFormat.getDateTimeInstance().format(java.util.Date(file.modifiedAtMillis)))
+        }
+        return details.joinToString("\n")
+    }
+
+    fun filePreview(file: FileResult): android.graphics.Bitmap? {
+        if (file.isDirectory || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return runCatching { activity.contentResolver.loadThumbnail(file.uri, Size(720, 480), null) }.getOrNull()
+    }
+
+    fun deleteFile(file: FileResult): String? {
+        if (file.isDirectory) return "Folder deletion is not supported"
+        return runCatching {
+            if (activity.contentResolver.delete(file.uri, null, null) > 0) null
+            else "File could not be deleted"
+        }.getOrElse { "File could not be deleted" }
+    }
+
+    private fun formatFileSize(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val units = arrayOf("KB", "MB", "GB", "TB")
+        var value = bytes / 1024.0
+        var unit = 0
+        while (value >= 1024 && unit < units.lastIndex) { value /= 1024; unit++ }
+        return String.format(java.util.Locale.getDefault(), "%.1f %s", value, units[unit])
     }
 
     private fun openFolder(folder: FileResult): String? {
@@ -605,11 +704,15 @@ class CommandEngine(private val activity: Activity) {
             INTERNAL_HUB -> internalDestination(HubActivity::class.java)
             INTERNAL_HOME -> internalDestination(MainActivity::class.java)
             INTERNAL_SETTINGS -> internalDestination(SettingsActivity::class.java)
+            INTERNAL_SWITCHER -> return "Open App Switcher from Commander"
             else -> if (app.packageName.startsWith(INTERNAL_WEB)) {
                 return searchWeb(Uri.decode(app.packageName.removePrefix(INTERNAL_WEB)))
             } else packageManager.getLaunchIntentForPackage(app.packageName) ?: return "App cannot be opened"
         }
         activity.startActivity(intent)
+        if (!app.packageName.startsWith("internal:")) {
+            AppLaunchHistory.record(activity.applicationContext, app.packageName)
+        }
         activity.finish()
         return null
     }
@@ -624,6 +727,10 @@ class CommandEngine(private val activity: Activity) {
         const val INTERNAL_HOME = "internal:command-home"
         const val INTERNAL_SETTINGS = "internal:command-settings"
         const val INTERNAL_WEB = "internal:web-search:"
+        const val INTERNAL_ALL_APPS = "internal:all-apps"
+        const val INTERNAL_RECENT_APPS = "internal:recent-apps"
+        const val INTERNAL_SWITCHER = "internal:switcher"
+        const val INTERNAL_TASKS = "internal:todoist-tasks"
     }
 
     private fun shareToPackage(text: String, packageName: String, label: String): String? {

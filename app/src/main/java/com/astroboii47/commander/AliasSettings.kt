@@ -47,11 +47,12 @@ object AliasSettings {
         SearchTarget("arc", "Arc Search", "company.thebrowser.arc", "https://www.google.com/search?q=%s"),
         SearchTarget("amazon", "Amazon Australia", "com.amazon.mShop.android.shopping", "https://www.amazon.com.au/s?k=%s"),
         SearchTarget("settings", "Android Settings", "com.android.settings", ""),
+        SearchTarget("control", "Quick Controls", null, ""),
     )
 
     private fun prefs(context: Context) = context.getSharedPreferences("command_aliases", Context.MODE_PRIVATE)
     fun alias(context: Context, target: SearchTarget): String = prefs(context)
-        .getString(target.id, if (target.id == "settings") ".set" else "").orEmpty()
+        .getString(target.id, when (target.id) { "settings" -> ".set"; "control" -> "!control"; else -> "" }).orEmpty()
     fun save(context: Context, target: SearchTarget, alias: String) {
         prefs(context).edit().putString(target.id, aliases(alias).joinToString(", ")).apply()
     }
@@ -92,7 +93,7 @@ object AliasSettings {
                         android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
                             .resolveActivity(context.packageManager)?.packageName
                     } else target.packageName
-                    AliasSuggestion(it, target.label, if (target.id == "settings") "search system settings" else "search alias", packageName)
+                    AliasSuggestion(it, target.label, when (target.id) { "settings" -> "search system settings"; "control" -> "device and media controls"; else -> "search alias" }, packageName)
                 }
         }
         val shortcutAlias = TriggerSettings.effectiveAlias(AppShortcutSettings.alias(context))

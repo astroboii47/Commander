@@ -184,6 +184,9 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var hubTabModes by remember { mutableStateOf(HubSettings.tabVisibility.value) }
     var quickHubNavigation by remember { mutableStateOf(HubSettings.quickKeyboardNavigation.value) }
     var closeHubReplyAfterSending by remember { mutableStateOf(HubSettings.closeReplyAfterSending.value) }
+    var showHubNotificationImages by remember { mutableStateOf(HubSettings.showNotificationImages.value) }
+    var tintHubNotificationImages by remember { mutableStateOf(HubSettings.tintNotificationImages.value) }
+    var hubNotificationImagesOnRight by remember { mutableStateOf(HubSettings.notificationImagesOnRight.value) }
     var geminiKey by remember { mutableStateOf(GeminiSettings.apiKey(activity)) }
     var directSms by remember { mutableStateOf(SmsSettings.directEnabled(activity)) }
     val contactsGranted = ActivityCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
@@ -318,6 +321,53 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             Switch(
                 checked = pulseConfirmation,
                 onCheckedChange = { pulseConfirmation = it; saved = false },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Notification images in Hub", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Show conversation photos or app icons beside notification titles", color = Color(0xFF99958E), fontSize = 12.sp)
+            }
+            Switch(
+                checked = showHubNotificationImages,
+                onCheckedChange = {
+                    showHubNotificationImages = it
+                    HubSettings.saveShowNotificationImages(activity, it)
+                },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Place Hub images on right", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Show notification images beside the timestamp instead of the title", color = Color(0xFF99958E), fontSize = 12.sp)
+            }
+            Switch(
+                checked = hubNotificationImagesOnRight,
+                enabled = showHubNotificationImages,
+                onCheckedChange = {
+                    hubNotificationImagesOnRight = it
+                    HubSettings.saveNotificationImagesOnRight(activity, it)
+                },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Tint profile and app images", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Colour full-colour profile and app images with the Hub accent", color = Color(0xFF99958E), fontSize = 12.sp)
+            }
+            Switch(
+                checked = tintHubNotificationImages,
+                enabled = showHubNotificationImages,
+                onCheckedChange = {
+                    tintHubNotificationImages = it
+                    HubSettings.saveTintNotificationImages(activity, it)
+                },
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )
         }

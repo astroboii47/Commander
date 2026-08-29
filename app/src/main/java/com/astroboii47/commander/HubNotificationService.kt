@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.graphics.drawable.toBitmap
 import android.util.Log
 import android.os.Build
+import android.graphics.Bitmap
 
 data class HubItem(
     val key: String,
@@ -20,17 +21,24 @@ data class HubItem(
     val title: String,
     val conversationTitle: String?,
     val text: String,
+    val expandedText: String,
+    val textLines: List<String>,
     val messages: List<HubMessage>,
+    val displayImage: Bitmap?,
+    val displayImageIsMonochrome: Boolean,
     val time: Long,
     val category: String?,
     val contentIntent: PendingIntent?,
     val replyAction: HubReplyAction?,
     val notificationActions: List<HubNotificationAction>,
+    val hasAttachment: Boolean,
     val isSummary: Boolean,
     val isGroupHeader: Boolean,
+    val groupKey: String?,
     val channelId: String?,
     val shortcutId: String?,
     val sourceKeys: Set<String>,
+    val detached: Boolean = false,
 )
 
 data class HubNotificationAction(
@@ -56,6 +64,7 @@ object HubRepository {
     var items by mutableStateOf<List<HubItem>>(emptyList())
         private set
     private var dismissNotification: ((String) -> Unit)? = null
+    private var snoozeNotification: ((String, Long) -> Unit)? = null
     private var refreshNotifications: (() -> Unit)? = null
     private data class PendingReply(
         val message: HubMessage,
@@ -67,6 +76,12 @@ object HubRepository {
     private data class PendingNotificationAction(val packageName: String, val phrases: Set<String>, val time: Long)
     private val pendingNotificationActions = mutableListOf<PendingNotificationAction>()
     private val suppressedActionConfirmationKeys = mutableMapOf<String, Long>()
+    private data class PendingExternalMutation(val packageName: String, val selectedKeys: Set<String>, val time: Long)
+    private var pendingExternalMutation: PendingExternalMutation? = null
+
+    fun prepareExternalMutation(item: HubItem) {
+        pendingExternalMutation = PendingExternalMutation(item.packageName, item.sourceKeys.ifEmpty { setOf(item.key) }, System.currentTimeMillis())
+    }
 
     fun recordNotificationAction(packageName: String, title: String) {
         val action = title.trim().lowercase()
@@ -104,6 +119,10 @@ object HubRepository {
         dismissNotification = handler
     }
 
+    fun attachSnoozeHandler(handler: ((String, Long) -> Unit)?) {
+        snoozeNotification = handler
+    }
+
     fun attachRefreshHandler(handler: (() -> Unit)?) {
         refreshNotifications = handler
     }
@@ -131,6 +150,15 @@ object HubRepository {
             items = items.filterNot { it.key == item.key }
         } else {
             dismiss(item.key)
+        }
+    }
+
+    fun snooze(item: HubItem, durationMillis: Long) {
+        val keys = item.sourceKeys.ifEmpty { setOf(item.key) }
+        items = items.filterNot { it.key == item.key || it.sourceKeys.any(keys::contains) }
+        keys.forEach { key ->
+            sentReplies.remove(key)
+            snoozeNotification?.invoke(key, durationMillis)
         }
     }
 
@@ -204,12 +232,31 @@ object HubRepository {
         items = if (converted == null) {
             items.filterNot { it.key == notification.key }
         } else {
-            deduplicateNotifications(items.filterNot { notification.key in it.sourceKeys } + converted)
+            deduplicateNotifications(items.filterNot { it.key == notification.key || notification.key in it.sourceKeys } + converted)
                 .sortedByDescending(HubItem::time)
         }
     }
 
     fun remove(key: String) {
+        val mutation = pendingExternalMutation?.takeIf {
+            System.currentTimeMillis() - it.time <= EXTERNAL_MUTATION_WINDOW_MS
+        }.also { if (it == null) pendingExternalMutation = null }
+        val affected = items.firstOrNull { it.key == key || key in it.sourceKeys }
+        if (affected != null && mutation?.packageName == affected.packageName && key !in mutation.selectedKeys) {
+            // Some apps clear every notification in a group after opening or
+            // acting on one child. Preserve collateral siblings in Hub, but
+            // remove actions whose PendingIntents are no longer live.
+            items = items.map { item ->
+                if (item !== affected) item else item.copy(
+                    contentIntent = null,
+                    replyAction = null,
+                    notificationActions = emptyList(),
+                    sourceKeys = item.sourceKeys - key,
+                    detached = true,
+                )
+            }
+            return
+        }
         items = items.mapNotNull { item ->
             if (key !in item.sourceKeys) item else {
                 val remaining = item.sourceKeys - key
@@ -230,16 +277,21 @@ private const val SENT_REPLY_RETENTION_MS = 10 * 60 * 1000L
 private const val SENT_REPLY_MATCH_WINDOW_MS = 2 * 60 * 1000L
 private const val ACTION_CONFIRMATION_WINDOW_MS = 5_000L
 private const val SUPPRESSED_CONFIRMATION_RETENTION_MS = 60_000L
+private const val EXTERNAL_MUTATION_WINDOW_MS = 5_000L
 private fun String.normalizedReplyText(): String = trim().replace(Regex("\\s+"), " ")
 
 class HubNotificationService : NotificationListenerService() {
     override fun onListenerConnected() {
         HubRepository.attachDismissHandler(::cancelNotification)
+        HubRepository.attachSnoozeHandler { key, durationMillis ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) snoozeNotification(key, durationMillis)
+        }
         HubRepository.attachRefreshHandler(::refresh)
         refresh()
     }
     override fun onListenerDisconnected() {
         HubRepository.attachDismissHandler(null)
+        HubRepository.attachSnoozeHandler(null)
         HubRepository.attachRefreshHandler(null)
     }
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -281,6 +333,9 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
         ?.trim()?.takeIf(String::isNotBlank)
     val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
         ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+    val expandedText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+    val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES).orEmpty()
+        .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotBlank) }
     if (title.isBlank() && text.isBlank()) return null
     val appName = appLabelCache.getOrPut(packageName) {
         runCatching {
@@ -320,6 +375,25 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
                 )
             }
     }.getOrDefault(emptyList()) else emptyList()
+    var displayImageIsMonochrome = false
+    val displayImage = runCatching {
+        val latestPersonIcon = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Notification.MessagingStyle.Message
+                .getMessagesFromBundleArray(extras.getParcelableArray(Notification.EXTRA_MESSAGES))
+                .asReversed()
+                .firstNotNullOfOrNull { it.senderPerson?.icon }
+        } else null
+        val conversationLike = conversationTitle != null || messages.isNotEmpty() ||
+            notification.category == Notification.CATEGORY_MESSAGE
+        val preferredIcon = if (conversationLike) {
+            latestPersonIcon ?: notification.getLargeIcon()
+        } else {
+            notification.smallIcon?.also { displayImageIsMonochrome = true }
+                ?: notification.getLargeIcon()
+        }
+        preferredIcon?.loadDrawable(service)?.toBitmap(96, 96)
+            ?: service.packageManager.getApplicationIcon(packageName).also { displayImageIsMonochrome = false }.toBitmap(96, 96)
+    }.getOrNull()
     val hasSummaryFlag = notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
     val isAggregateSummary = hasSummaryFlag && (
         notification.flags and FLAG_AUTOGROUP_SUMMARY != 0 ||
@@ -335,7 +409,11 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
         title = title.ifBlank { appName },
         conversationTitle = conversationTitle,
         text = text,
+        expandedText = expandedText,
+        textLines = textLines,
         messages = messages,
+        displayImage = displayImage,
+        displayImageIsMonochrome = displayImageIsMonochrome,
         time = postTime,
         category = notification.category,
         contentIntent = notification.contentIntent,
@@ -359,12 +437,14 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
                     (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && action.semanticAction == Notification.Action.SEMANTIC_ACTION_DELETE),
             )
         }.distinctBy { it.title.lowercase() },
+        hasAttachment = extras.getBoolean("has_attachment", false),
         // Some apps, including Shopify, promote the newest ordinary
         // notification to Android's group header and set GROUP_SUMMARY on it.
         // Keep those useful rows in their normal category. The summaries tab
         // is reserved for rows whose content is actually aggregate.
         isSummary = isAggregateSummary,
         isGroupHeader = hasSummaryFlag,
+        groupKey = groupKey,
         channelId = notification.channelId,
         shortcutId = notification.shortcutId,
         sourceKeys = setOf(key),
@@ -383,10 +463,15 @@ private fun deduplicateNotifications(source: List<HubItem>): List<HubItem> {
 
 private fun HubItem.isSemanticDuplicateOf(other: HubItem): Boolean {
     if (packageName != other.packageName || isSummary != other.isSummary) return false
-    val sameGroupedEvent = isGroupHeader != other.isGroupHeader && channelId == other.channelId &&
-        kotlin.math.abs(time - other.time) <= SEMANTIC_POST_TIME_WINDOW_MS &&
-        listOf(title.semanticIdentity(), text.semanticIdentity()).sorted() ==
-        listOf(other.title.semanticIdentity(), other.text.semanticIdentity()).sorted()
+    val exactSameContent = title.semanticIdentity() == other.title.semanticIdentity() &&
+        text.semanticIdentity() == other.text.semanticIdentity()
+    val sameAndroidGroup = !groupKey.isNullOrBlank() && groupKey == other.groupKey
+    val sameGroupedEvent = isGroupHeader != other.isGroupHeader && exactSameContent && (
+        sameAndroidGroup || (
+            channelId == other.channelId &&
+                kotlin.math.abs(time - other.time) <= SEMANTIC_POST_TIME_WINDOW_MS
+            )
+        )
     if (sameGroupedEvent) return true
     val thisShortcut = shortcutId?.takeIf(String::isNotBlank)
     val otherShortcut = other.shortcutId?.takeIf(String::isNotBlank)
@@ -413,7 +498,11 @@ private fun HubItem.isSemanticDuplicateOf(other: HubItem): Boolean {
 }
 
 private fun HubItem.mergeDuplicate(other: HubItem): HubItem {
-    val preferred = if (duplicateQuality() >= other.duplicateQuality()) this else other
+    val preferred = when {
+        isGroupHeader != other.isGroupHeader -> if (isGroupHeader) other else this
+        duplicateQuality() >= other.duplicateQuality() -> this
+        else -> other
+    }
     val richerMessages = if (messages.size >= other.messages.size) messages else other.messages
     return preferred.copy(
         messages = richerMessages,

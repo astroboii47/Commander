@@ -31,8 +31,8 @@ android {
         applicationId = "com.astroboii47.commander"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.0-alpha.4.1"
+        versionCode = 7
+        versionName = "0.1.0-alpha.5"
     }
 
     signingConfigs {
@@ -61,7 +61,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     kotlinOptions { jvmTarget = "11" }
-    buildFeatures { compose = true }
+    lint {
+        // This reflection runs only inside the explicitly authorised Shizuku
+        // shell user service used for system task switching and snapshots.
+        disable += "BlockedPrivateApi"
+    }
+    buildFeatures {
+        compose = true
+        aidl = true
+        buildConfig = true
+    }
 }
 
 dependencies {
@@ -72,5 +81,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

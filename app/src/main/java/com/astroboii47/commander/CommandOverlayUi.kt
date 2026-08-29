@@ -13,6 +13,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
@@ -37,12 +38,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -53,7 +56,49 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardReturn
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.outlined.Brightness6
+import androidx.compose.material.icons.outlined.FlashlightOn
+import androidx.compose.material.icons.outlined.ScreenRotation
+import androidx.compose.material.icons.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Coffee
+import androidx.compose.material.icons.outlined.BrightnessLow
+import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.ScreenShare
+import androidx.compose.material.icons.outlined.StayCurrentPortrait
+import androidx.compose.material.icons.outlined.Swipe
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.BatteryChargingFull
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.ViewCarousel
+import androidx.compose.material.icons.outlined.InsertDriveFile
+import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PictureAsPdf
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.AudioFile
+import androidx.compose.material.icons.outlined.VideoFile
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.TableChart
+import androidx.compose.material.icons.outlined.Slideshow
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Repeat
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,6 +106,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,7 +126,10 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -115,6 +164,16 @@ private val OverlaySerif = FontFamily(Font(R.font.instrument_serif_regular))
 private const val InputSentinel = '\u2060'
 private val ResultViewportBottomPadding = 10.dp
 
+private enum class FileAction(val title: String, val subtitle: String) {
+    Open("Open", "open with the default app"),
+    OpenWith("Open with…", "choose another app"),
+    Reveal("Reveal in folder", "show the containing folder"),
+    Preview("Preview", "view without leaving Commander"),
+    Info("File info", "type, size, location and date"),
+    Delete("Delete", "permanently delete this file"),
+}
+private enum class AppListMode { All, Recents }
+
 private data class OverlayPalette(
     val panel: Color,
     val tile: Color,
@@ -131,6 +190,7 @@ fun CommandOverlayApp(
     initialAskPreview: String? = null,
     initialAskPrompt: String? = null,
     initialAskWaiting: Boolean = false,
+    initialSwitcherMode: Boolean = false,
 ) {
     val configuration = LocalConfiguration.current
     val dark = (configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -167,10 +227,38 @@ fun CommandOverlayApp(
     var selectedContact by remember { mutableStateOf<ContactResult?>(null) }
     var selectedContactKind by remember { mutableStateOf<CommandKind?>(null) }
     var previousStageQuery by remember { mutableStateOf<String?>(null) }
+    var switcherMode by remember { mutableStateOf(initialSwitcherMode) }
+    var todoistMode by remember { mutableStateOf(false) }
+    var todoistTasks by remember { mutableStateOf(TodoistTasks.cached()) }
+    var todoistLoading by remember { mutableStateOf(false) }
+    var todoistError by remember { mutableStateOf<String?>(null) }
+    var completingTodoistId by remember { mutableStateOf<String?>(null) }
+    var fileActionTarget by remember { mutableStateOf<FileResult?>(null) }
+    var fileActionPreviousQuery by remember { mutableStateOf("") }
+    var fileActionPreviousIndex by remember { mutableStateOf(0) }
+    var fileRestoreIndex by remember { mutableStateOf<Int?>(null) }
+    var skipNextFileReload by remember { mutableStateOf(false) }
+    var fileActionDetail by remember { mutableStateOf<String?>(null) }
+    var fileActionPreview by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var fileActionDirectDetail by remember { mutableStateOf(false) }
+    var fileDeleteConfirmation by remember { mutableStateOf(false) }
+    var switcherAllTasks by remember { mutableStateOf<List<SwitcherTask>>(emptyList()) }
+    val switcherClient = remember { TaskSwitcherClient(engine.context) {} }
+    val switcherTasks = remember(switcherAllTasks, query) {
+        switcherAllTasks.filter { query.isBlank() || it.label.contains(query, ignoreCase = true) }
+    }
+    val visibleTodoistTasks = remember(todoistTasks, query) {
+        val needle = query.trim()
+        todoistTasks.filter { task -> needle.isBlank() || listOf(task.content, task.description, task.project, task.labels.joinToString(" ")).any { it.contains(needle, true) } }
+            .sortedWith(compareBy<TodoistTask>({ it.isOverdue() }, { it.dueDateTime ?: it.dueDate.orEmpty() }, { it.content.lowercase() }))
+    }
     var selectedIndex by remember { mutableStateOf(0) }
+    var appListMode by remember { mutableStateOf<AppListMode?>(null) }
     var visibleAppIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
     var visibleFileIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
+    val fileListState = rememberLazyListState()
     var executing by remember { mutableStateOf(false) }
+    var controlFeedback by remember { mutableStateOf<Pair<ControlKind, String>?>(null) }
     var askPreview by remember { mutableStateOf(initialAskPreview) }
     var askWaiting by remember { mutableStateOf(initialAskWaiting) }
     var askTimedOut by remember { mutableStateOf(false) }
@@ -196,8 +284,11 @@ fun CommandOverlayApp(
     val settingsResults = remember(aliasMatch) {
         if (aliasMatch?.target?.id == "settings") engine.searchSystemSettings(aliasMatch.query) else emptyList()
     }
-    val discoveredAliasSuggestions = remember(query, AppSearchSettings.aliasSuggestions.value) {
-        AliasSettings.suggestions(engine.context, query)
+    val controlResults = remember(aliasMatch) {
+        if (aliasMatch?.target?.id == "control") ControlActions.results(aliasMatch.query) else emptyList()
+    }
+    val discoveredAliasSuggestions = remember(query, appListMode, AppSearchSettings.aliasSuggestions.value) {
+        if (appListMode == null) AliasSettings.suggestions(engine.context, query) else emptyList()
     }
     val aliasSuggestions = remember(query, discoveredAliasSuggestions) {
         val plainText = query.isNotBlank() && query.first().isLetterOrDigit() && !query.contains(' ')
@@ -219,13 +310,25 @@ fun CommandOverlayApp(
         if (parsed.kind == CommandKind.Calculator) engine.calculatorPreview(parsed.text) else null
     }
     val inGeminiConversation = askMessages.isNotEmpty()
-    val activeKind = if (inGeminiConversation) CommandKind.Ask else selectedContactKind ?: parsed.kind
+    val activeKind = if (fileActionTarget != null) CommandKind.Files else if (inGeminiConversation) CommandKind.Ask else selectedContactKind ?: parsed.kind
+    val fileActions = remember(fileActionTarget, query) {
+        val target = fileActionTarget
+        if (target == null) emptyList() else FileAction.entries.filter { action ->
+            !(target.isDirectory && action in setOf(FileAction.Reveal, FileAction.Preview, FileAction.Delete)) &&
+                (query.isBlank() || action.title.contains(query.trim(), ignoreCase = true) || action.subtitle.contains(query.trim(), ignoreCase = true))
+        }
+    }
     val plainAliasDiscovery = activeKind == CommandKind.Apps && query.isNotBlank() &&
         query.first().isLetterOrDigit() && !query.contains(' ') && aliasSuggestions.isNotEmpty()
-    val baseApps = remember(query, activeKind, aliasMatch, plainAliasDiscovery) {
-        if (activeKind == CommandKind.Apps && aliasMatch == null && (aliasSuggestions.isEmpty() || plainAliasDiscovery)) {
-            engine.searchApps(parsed.text, Int.MAX_VALUE)
-        } else emptyList()
+    val baseApps = remember(query, activeKind, aliasMatch, plainAliasDiscovery, appListMode, switcherMode, todoistMode) {
+        if (switcherMode || todoistMode) emptyList() else
+        when (appListMode) {
+            AppListMode.All -> engine.allApps(query)
+            AppListMode.Recents -> engine.commanderRecents(query)
+            null -> if (activeKind == CommandKind.Apps && aliasMatch == null && (aliasSuggestions.isEmpty() || plainAliasDiscovery)) {
+                engine.searchApps(parsed.text, Int.MAX_VALUE)
+            } else emptyList()
+        }
     }
     var apps by remember { mutableStateOf<List<AppResult>>(emptyList()) }
     var rawFiles by remember { mutableStateOf<List<FileResult>>(emptyList()) }
@@ -248,10 +351,14 @@ fun CommandOverlayApp(
         } else emptyList()
     }
     val actionReady = when {
+        todoistMode -> visibleTodoistTasks.isNotEmpty()
+        fileActionTarget != null -> fileActionDetail != null || fileActions.isNotEmpty()
+        switcherMode -> switcherTasks.isNotEmpty()
         plainAliasDiscovery -> aliasSuggestions.isNotEmpty() || apps.isNotEmpty()
         taskerResults.isNotEmpty() -> true
         aliasSuggestions.isNotEmpty() -> true
         aliasMatch?.target?.id == "settings" -> settingsResults.isNotEmpty()
+        aliasMatch?.target?.id == "control" -> controlResults.isNotEmpty()
         shortcutQuery != null -> shortcutResults.isNotEmpty()
         taskerResults.isNotEmpty() -> true
         else -> when (activeKind) {
@@ -293,12 +400,51 @@ fun CommandOverlayApp(
     // for both curves to remain optically concentric.
     val resultsPanelShape = RoundedCornerShape(23.dp)
 
+    LaunchedEffect(switcherMode) {
+        if (switcherMode) {
+            switcherClient.bind()
+            switcherAllTasks = withContext(Dispatchers.IO) { TaskSwitcherShell.load(engine.context) }
+            selectedIndex = 0
+        }
+    }
+    DisposableEffect(Unit) { onDispose { switcherClient.unbind() } }
+
     fun setEditorQuery(value: String) {
         query = value
         editorValue = TextFieldValue(
             InputSentinel + value,
             TextRange(value.length + 1),
         )
+    }
+
+    LaunchedEffect(query, todoistMode) {
+        // Match the rest of Commander's word aliases: show the discovery
+        // result while "tasks" is being typed, then enter it on the delimiter.
+        if (!todoistMode && query.equals("tasks ", ignoreCase = true)) {
+            HomeTypingHandoff.finish()
+            previousStageQuery = "tasks"
+            todoistMode = true
+            todoistTasks = TodoistTasks.cached()
+            todoistError = null
+            setEditorQuery("")
+            selectedIndex = 0
+        }
+    }
+    LaunchedEffect(todoistMode) {
+        if (todoistMode) {
+            // Clearing the alias rebuilds the editor. Explicitly reclaim focus
+            // so physical navigation works before the user edits the filter.
+            delay(1)
+            focusRequester.requestFocus()
+            todoistLoading = true
+            withContext(Dispatchers.IO) { TodoistTasks.load(engine.context) }.fold(
+                onSuccess = { todoistTasks = it; todoistError = null },
+                onFailure = { todoistError = it.message ?: "Could not load Todoist tasks" },
+            )
+            todoistLoading = false
+            selectedIndex = 0
+            focusRequester.requestFocus()
+        }
     }
 
     fun isCommandTrigger(symbol: Char): Boolean =
@@ -370,6 +516,7 @@ fun CommandOverlayApp(
             query.isNotBlank() && activeKind == CommandKind.Apps && aliasMatch == null &&
             shortcutQuery == null && taskerResults.isEmpty() && app != null &&
             !app.packageName.startsWith("internal:web-search:")
+            && app.packageName !in setOf("internal:all-apps", "internal:recent-apps", "internal:switcher")
         if (!eligible) {
             automaticallyOpenedAppKey = null
             return@LaunchedEffect
@@ -387,13 +534,21 @@ fun CommandOverlayApp(
         } else notice = error
     }
     LaunchedEffect(aliasMatch?.target?.id, aliasMatch?.target?.packageName) {
+        if (aliasMatch?.target?.id != "control") {
+            controlFeedback = null
+        }
         aliasIcon = if (aliasMatch?.target?.id == "settings") {
             withContext(Dispatchers.IO) { engine.loadSystemSettingsIcon() }
         } else aliasMatch?.target?.packageName?.let { packageName ->
             withContext(Dispatchers.IO) { engine.loadPackageIcon(packageName) }
         }
     }
-    LaunchedEffect(fileSearchQuery, activeKind, fileSortMode, maxVisibleResults) {
+    LaunchedEffect(fileSearchQuery, activeKind, fileSortMode, maxVisibleResults, fileActionTarget) {
+        if (fileActionTarget != null) return@LaunchedEffect
+        if (skipNextFileReload) {
+            skipNextFileReload = false
+            return@LaunchedEffect
+        }
         rawFiles = if (activeKind == CommandKind.Files && fileSearchQuery.query.isNotBlank()) {
             delay(140)
             withContext(Dispatchers.IO) {
@@ -437,6 +592,44 @@ fun CommandOverlayApp(
     }
 
     fun launchApp(app: AppResult) {
+        if (app.packageName == "internal:todoist-tasks") {
+            HomeTypingHandoff.finish()
+            previousStageQuery = query
+            todoistMode = true
+            todoistTasks = TodoistTasks.cached()
+            todoistError = null
+            SoundFeedback.play(engine.context, CommandSound.Step)
+            setEditorQuery("")
+            selectedIndex = 0
+            notice = null
+            focusRequester.requestFocus()
+            return
+        }
+        if (app.packageName == "internal:switcher") {
+            HomeTypingHandoff.finish()
+            previousStageQuery = query
+            switcherMode = true
+            appListMode = null
+            SoundFeedback.play(engine.context, CommandSound.Step)
+            setEditorQuery("")
+            selectedIndex = 0
+            notice = null
+            return
+        }
+        val mode = when (app.packageName) {
+            "internal:all-apps" -> AppListMode.All
+            "internal:recent-apps" -> AppListMode.Recents
+            else -> null
+        }
+        if (mode != null) {
+            previousStageQuery = query
+            appListMode = mode
+            SoundFeedback.play(engine.context, CommandSound.Step)
+            setEditorQuery("")
+            selectedIndex = 0
+            notice = null
+            return
+        }
         if (executing) return
         executing = true
         scope.launch {
@@ -461,8 +654,188 @@ fun CommandOverlayApp(
         notice = null
     }
 
+    fun runControl(result: ControlResult) {
+        val needsValue = when (result.kind) {
+            ControlKind.Brightness, ControlKind.Volume -> result.percent == null && !result.automatic
+            ControlKind.RingerMode, ControlKind.Theme, ControlKind.BatteryProtection -> result.option == null
+            else -> false
+        }
+        if (needsValue) {
+            val command = when (result.kind) {
+                ControlKind.Brightness -> "brightness"
+                ControlKind.Volume -> "volume"
+                ControlKind.RingerMode -> "ringer"
+                ControlKind.Theme -> "theme"
+                ControlKind.BatteryProtection -> "battery"
+                else -> ""
+            }
+            SoundFeedback.play(engine.context, CommandSound.Step)
+            setEditorQuery("${aliasMatch?.alias ?: "!control"} $command ")
+            selectedIndex = 0
+            notice = null
+            focusRequester.requestFocus()
+            return
+        }
+        val queryBeforeExecution = query
+        if (result.kind == ControlKind.MiniMode) {
+            (engine.context as? OverlayActivity)?.preserveQueryForMiniMode(queryBeforeExecution)
+        }
+        executing = true
+        scope.launch {
+            delay(90)
+            val error = ControlActions.execute(engine.context as android.app.Activity, result)
+            executing = false
+            playOutcome(error)
+            if (error == null) {
+                // Controls are deliberately repeatable. Keep the selected result
+                // and its query on screen so Enter can toggle it again.
+                notice = null
+                controlFeedback = result.kind to ControlActions.feedback(
+                    engine.context as android.app.Activity,
+                    result,
+                )
+                if (query.length < queryBeforeExecution.length) {
+                    setEditorQuery(queryBeforeExecution)
+                }
+            } else notice = error
+        }
+    }
+
+    fun openFileActions(file: FileResult) {
+        fileActionPreviousQuery = query
+        fileActionPreviousIndex = files.indexOfFirst { it.uri == file.uri }.coerceAtLeast(0)
+        fileActionTarget = file
+        fileActionDetail = null
+        fileActionPreview = null
+        fileActionDirectDetail = false
+        fileDeleteConfirmation = false
+        notice = null
+        setEditorQuery("")
+        selectedIndex = 0
+        SoundFeedback.play(engine.context, CommandSound.Step)
+    }
+
+    fun openFileQuickPreview(file: FileResult) {
+        fileActionPreviousQuery = query
+        fileActionPreviousIndex = files.indexOfFirst { it.uri == file.uri }.coerceAtLeast(0)
+        fileActionTarget = file
+        fileActionPreview = null
+        fileActionDetail = "loading preview…"
+        fileActionDirectDetail = true
+        notice = null
+        setEditorQuery("")
+        SoundFeedback.play(engine.context, CommandSound.Step)
+        scope.launch {
+            if (file.isDirectory) {
+                fileActionDetail = withContext(Dispatchers.IO) { engine.fileInfo(file) }
+            } else {
+                fileActionPreview = withContext(Dispatchers.IO) { engine.filePreview(file) }
+                fileActionDetail = if (fileActionPreview == null) "Preview is unavailable for this file type\n\n${withContext(Dispatchers.IO) { engine.fileInfo(file) }}" else "preview"
+            }
+        }
+    }
+
+    fun completeTodoistTask(task: TodoistTask) {
+        if (completingTodoistId != null) return
+        scope.launch {
+            completingTodoistId = task.id
+            val startedAt = System.currentTimeMillis()
+            val error = withContext(Dispatchers.IO) { TodoistTasks.complete(engine.context, task.id) }
+            delay((360L - (System.currentTimeMillis() - startedAt)).coerceAtLeast(0L))
+            playOutcome(error)
+            if (error == null) {
+                todoistTasks = todoistTasks.filterNot { it.id == task.id }
+                selectedIndex = selectedIndex.coerceAtMost((visibleTodoistTasks.size - 2).coerceAtLeast(0))
+            } else todoistError = error
+            completingTodoistId = null
+        }
+    }
+
     fun execute() {
         if (executing) return
+        if (todoistMode) {
+            visibleTodoistTasks.getOrNull(selectedIndex)?.let { TodoistTasks.open(engine.context, it) }
+            return
+        }
+        fileActionTarget?.let { target ->
+            if (fileActionDetail != null) {
+                if (fileDeleteConfirmation) {
+                    executing = true
+                    scope.launch {
+                        delay(90)
+                        val error = withContext(Dispatchers.IO) { engine.deleteFile(target) }
+                        executing = false
+                        playOutcome(error)
+                        if (error == null) {
+                            rawFiles = rawFiles.filterNot { it.uri == target.uri }
+                            val restored = fileActionPreviousIndex.coerceAtMost(rawFiles.lastIndex.coerceAtLeast(0))
+                            selectedIndex = restored
+                            fileRestoreIndex = restored
+                            skipNextFileReload = true
+                            fileDeleteConfirmation = false
+                            fileActionDetail = null
+                            fileActionTarget = null
+                            setEditorQuery(fileActionPreviousQuery)
+                        } else {
+                            notice = error
+                            fileDeleteConfirmation = false
+                            fileActionDetail = null
+                        }
+                    }
+                }
+                return
+            }
+            fileActions.getOrNull(selectedIndex)?.let { action ->
+                executing = true
+                scope.launch {
+                    delay(90)
+                    when (action) {
+                        FileAction.Open -> engine.openFile(target)
+                        FileAction.OpenWith -> engine.openFileWith(target)
+                        FileAction.Reveal -> engine.revealFile(target)
+                        FileAction.Preview -> {
+                            fileActionDirectDetail = false
+                            fileActionPreview = withContext(Dispatchers.IO) { engine.filePreview(target) }
+                            fileActionDetail = if (fileActionPreview == null) "Preview is unavailable for this file type" else "preview"
+                            null
+                        }
+                        FileAction.Info -> {
+                            fileActionDirectDetail = false
+                            fileActionDetail = withContext(Dispatchers.IO) { engine.fileInfo(target) }
+                            null
+                        }
+                        FileAction.Delete -> {
+                            fileDeleteConfirmation = true
+                            fileActionDetail = "Permanently delete ${target.name}?\n\nPress Enter or Right Arrow to confirm.\nLeft Arrow or Back to cancel."
+                            null
+                        }
+                    }.also { error ->
+                        executing = false
+                        if (action !in setOf(FileAction.Preview, FileAction.Info)) {
+                            playOutcome(error)
+                            if (error != null) notice = error
+                        } else SoundFeedback.play(engine.context, CommandSound.Step)
+                    }
+                }
+            }
+            return
+        }
+        if (switcherMode) {
+            switcherTasks.getOrNull(selectedIndex)?.let { task ->
+                executing = true
+                scope.launch(Dispatchers.IO) {
+                    val opened = switcherClient.switch(task)
+                    withContext(Dispatchers.Main) {
+                        executing = false
+                        if (opened) onDismiss() else {
+                            notice = "Could not switch to ${task.label}"
+                            playOutcome(notice)
+                        }
+                    }
+                }
+            }
+            return
+        }
         val now = android.os.SystemClock.elapsedRealtime()
         if (now < executeBlockedUntil) return
         if (plainAliasDiscovery) {
@@ -495,6 +868,12 @@ fun CommandOverlayApp(
                     playOutcome(error)
                     if (error != null) notice = error
                 }
+            }
+            return
+        }
+        if (aliasMatch?.target?.id == "control") {
+            controlResults.getOrNull(selectedIndex.coerceIn(0, controlResults.lastIndex.coerceAtLeast(0)))?.let { result ->
+                runControl(result)
             }
             return
         }
@@ -568,6 +947,10 @@ fun CommandOverlayApp(
                 return
             }
         }
+        if (activeKind == CommandKind.Apps) {
+            apps.getOrNull(selectedIndex.coerceIn(0, apps.lastIndex.coerceAtLeast(0)))?.let(::launchApp)
+            return
+        }
         if (activeKind == CommandKind.Files) {
             if (!hasFileAccess) {
                 engine.openFileSearchAccess()
@@ -635,10 +1018,66 @@ fun CommandOverlayApp(
             }
         }
     }
+    fun submitFromEditor(shiftPressed: Boolean = false) {
+        if (todoistMode) {
+            visibleTodoistTasks.getOrNull(selectedIndex)?.let { task ->
+                if (shiftPressed) TodoistTasks.open(engine.context, task) else completeTodoistTask(task)
+            }
+        } else execute()
+    }
+
     fun emptyBackspace(): Boolean {
+        if (todoistMode) {
+            todoistMode = false
+            todoistError = null
+            val previous = previousStageQuery.orEmpty()
+            previousStageQuery = null
+            setEditorQuery(previous)
+            selectedIndex = 0
+            return true
+        }
+        if (fileActionTarget != null) {
+            if (fileActionDetail != null) {
+                if (fileActionDirectDetail) {
+                    selectedIndex = fileActionPreviousIndex
+                    fileRestoreIndex = fileActionPreviousIndex
+                    skipNextFileReload = true
+                    fileActionTarget = null
+                    fileActionDetail = null
+                    fileActionPreview = null
+                    fileActionDirectDetail = false
+                    fileDeleteConfirmation = false
+                    setEditorQuery(fileActionPreviousQuery)
+                } else {
+                    fileDeleteConfirmation = false
+                    fileActionDetail = null
+                    fileActionPreview = null
+                    setEditorQuery("")
+                    selectedIndex = 0
+                }
+            } else {
+                selectedIndex = fileActionPreviousIndex
+                fileRestoreIndex = fileActionPreviousIndex
+                skipNextFileReload = true
+                fileActionTarget = null
+                setEditorQuery(fileActionPreviousQuery)
+            }
+            return true
+        }
+        if (switcherMode) {
+            switcherMode = false
+            switcherAllTasks = emptyList()
+            val previousQuery = previousStageQuery.orEmpty()
+            previousStageQuery = null
+            notice = null
+            setEditorQuery(previousQuery)
+            selectedIndex = 0
+            return true
+        }
         if (previousStageQuery != null) {
             val previousQuery = previousStageQuery!!
             previousStageQuery = null
+            appListMode = null
             selectedContact = null
             selectedContactKind = null
             notice = null
@@ -647,6 +1086,85 @@ fun CommandOverlayApp(
             onDismiss()
         }
         return true
+    }
+    BackHandler(enabled = fileActionTarget != null) { emptyBackspace() }
+    DisposableEffect(switcherMode, switcherTasks.size, todoistMode, visibleTodoistTasks.size, fileActionTarget, fileActions.size, fileActionDetail) {
+        if (switcherMode || todoistMode || fileActionTarget != null) {
+            val handler: (android.view.KeyEvent) -> Boolean = { event ->
+                if (event.action != android.view.KeyEvent.ACTION_DOWN) false
+                else if (fileActionTarget != null) when (event.keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        if (fileActionDetail == null) {
+                            val next = (selectedIndex + 1).coerceAtMost(fileActions.lastIndex.coerceAtLeast(0))
+                            if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
+                            selectedIndex = next
+                        }
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                        if (fileActionDetail == null) {
+                            val next = (selectedIndex - 1).coerceAtLeast(0)
+                            if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
+                            selectedIndex = next
+                        }
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> emptyBackspace()
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                    android.view.KeyEvent.KEYCODE_ENTER,
+                    android.view.KeyEvent.KEYCODE_DPAD_CENTER -> {
+                        if ((fileActionDetail == null && fileActions.isNotEmpty()) || fileDeleteConfirmation) execute()
+                        true
+                    }
+                    else -> false
+                } else if (todoistMode) when (event.keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        val next = (selectedIndex + 1).coerceAtMost(visibleTodoistTasks.lastIndex.coerceAtLeast(0))
+                        if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
+                        selectedIndex = next
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                        val next = (selectedIndex - 1).coerceAtLeast(0)
+                        if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
+                        selectedIndex = next
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_ENTER,
+                    android.view.KeyEvent.KEYCODE_DPAD_CENTER -> {
+                        visibleTodoistTasks.getOrNull(selectedIndex)?.let { task ->
+                            if (event.isShiftPressed) TodoistTasks.open(engine.context, task)
+                            else completeTodoistTask(task)
+                        }
+                        true
+                    }
+                    else -> false
+                } else when (event.keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        val next = (selectedIndex + 1).coerceAtMost(switcherTasks.lastIndex.coerceAtLeast(0))
+                        if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
+                        selectedIndex = next
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                        val next = (selectedIndex - 1).coerceAtLeast(0)
+                        if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
+                        selectedIndex = next
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_ENTER,
+                    android.view.KeyEvent.KEYCODE_DPAD_CENTER -> {
+                        if (switcherTasks.isNotEmpty()) execute()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            SwitcherKeyBridge.handler = handler
+            onDispose { if (SwitcherKeyBridge.handler === handler) SwitcherKeyBridge.handler = null }
+        } else onDispose { }
     }
     LaunchedEffect(Unit) {
         SoundFeedback.play(engine.context, CommandSound.Open)
@@ -675,7 +1193,13 @@ fun CommandOverlayApp(
         }
     }
     LaunchedEffect(query) {
-        selectedIndex = 0
+        val restoreIndex = fileRestoreIndex
+        if (restoreIndex != null && query == fileActionPreviousQuery) {
+            selectedIndex = restoreIndex
+            fileRestoreIndex = null
+        } else {
+            selectedIndex = 0
+        }
         if (query.isBlank()) {
             settledQuery = ""
         } else {
@@ -758,6 +1282,37 @@ fun CommandOverlayApp(
             } else {
             when {
                 notice != null -> OverlayNotice(notice!!, palette)
+                todoistMode -> OverlayTodoistTasks(
+                    tasks = visibleTodoistTasks,
+                    selectedIndex = selectedIndex,
+                    visibleRowCount = maxVisibleResults,
+                    palette = palette,
+                    loading = todoistLoading,
+                    error = todoistError,
+                    completingTaskId = completingTodoistId,
+                    onOpen = { TodoistTasks.open(engine.context, it) },
+                    onComplete = ::completeTodoistTask,
+                )
+                switcherMode -> AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn(tween(120)) + expandVertically(tween(190), expandFrom = Alignment.Bottom),
+                ) {
+                    OverlaySwitcherResults(
+                        tasks = switcherTasks,
+                        selectedIndex = selectedIndex,
+                        palette = palette,
+                        client = switcherClient,
+                        onClick = { task ->
+                            selectedIndex = switcherTasks.indexOf(task).coerceAtLeast(0)
+                            execute()
+                        },
+                        onDismiss = { task ->
+                            switcherAllTasks = switcherAllTasks.filterNot { it.taskId == task.taskId }
+                            selectedIndex = selectedIndex.coerceAtMost((switcherTasks.size - 2).coerceAtLeast(0))
+                            SoundFeedback.play(engine.context, CommandSound.Confirm)
+                        },
+                    )
+                }
                 plainAliasDiscovery -> OverlayDiscoveryResults(
                     suggestions = aliasSuggestions,
                     apps = apps,
@@ -796,6 +1351,12 @@ fun CommandOverlayApp(
                         if (error != null) notice = error
                     }
                 }
+                aliasMatch?.target?.id == "control" -> OverlayControlResults(
+                    controlResults, selectedIndex, maxVisibleResults, palette, controlFeedback,
+                ) { result ->
+                    selectedIndex = controlResults.indexOf(result).coerceAtLeast(0)
+                    runControl(result)
+                }
                 aliasMatch != null -> OverlayAliasPreview(aliasMatch, aliasIcon, palette, ::execute)
                 activeKind == CommandKind.Calculator && calculatorResult != null -> OverlayCalculatorResult(calculatorResult, palette, ::execute)
                 shortcutQuery != null -> OverlayShortcutResults(shortcutResults, selectedIndex, maxVisibleResults, palette) { shortcut ->
@@ -810,7 +1371,7 @@ fun CommandOverlayApp(
                         } else notice = error
                     }
                 }
-                activeKind == CommandKind.Apps && query.isNotBlank() -> OverlayAppResults(
+                activeKind == CommandKind.Apps && (query.isNotBlank() || appListMode != null) -> OverlayAppResults(
                     apps = apps,
                     selectedIndex = selectedIndex,
                     visibleRowCount = maxVisibleResults,
@@ -833,6 +1394,20 @@ fun CommandOverlayApp(
                         }
                     },
                 )
+                fileActionTarget != null -> if (fileActionDetail != null) {
+                    OverlayFileActionDetail(
+                        fileActionTarget!!,
+                        fileActionDetail!!,
+                        fileActionPreview,
+                        palette,
+                        onConfirmDelete = if (fileDeleteConfirmation) ::execute else null,
+                    )
+                } else {
+                    OverlayFileActions(fileActionTarget!!, fileActions, selectedIndex, maxVisibleResults, palette) { action ->
+                        selectedIndex = fileActions.indexOf(action).coerceAtLeast(0)
+                        execute()
+                    }
+                }
                 activeKind == CommandKind.Files && !hasFileAccess -> OverlayFileAccess(palette) { engine.openFileSearchAccess() }
                 activeKind == CommandKind.Files && parsed.text.isNotBlank() -> OverlayFileResults(
                     files,
@@ -840,7 +1415,9 @@ fun CommandOverlayApp(
                     maxVisibleResults,
                     palette,
                     fileSortMode,
+                    listState = fileListState,
                     onVisibleIndicesChanged = { visibleFileIndices = it },
+                    onLongClick = ::openFileActions,
                 ) { file ->
                     executing = true
                     scope.launch {
@@ -867,7 +1444,7 @@ fun CommandOverlayApp(
                 }
             }
 
-            if (query.isNotBlank() || selectedContact != null || inGeminiConversation) {
+            if (query.isNotBlank() || selectedContact != null || inGeminiConversation || switcherMode || todoistMode || fileActionTarget != null) {
                 Spacer(Modifier.height(10.dp))
                 if (selectedContact != null) {
                     Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -891,23 +1468,33 @@ fun CommandOverlayApp(
                     if (activeKind == CommandKind.Files) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "▸ ${if (selectedFileIsDirectory) "open folder" else "open file"}",
-                                color = palette.secondary,
+                                text = if (fileActionTarget != null) "▸ ${fileActionTarget!!.name} → ${if (fileActionDirectDetail) if (fileActionTarget!!.isDirectory) "info" else "preview" else "actions"}" else "▸ ${when (fileSearchQuery.mode) {
+                                    FileSearchMode.FilesOnly -> "file search"
+                                    FileSearchMode.FoldersOnly -> "folder search"
+                                    FileSearchMode.Default -> if (selectedFileIsDirectory) "open folder" else "open file"
+                                }}",
+                                color = if (fileActionTarget != null || fileSearchQuery.mode != FileSearchMode.Default) OverlayAccent else palette.secondary,
                                 fontFamily = OverlayMono,
+                                fontWeight = if (fileActionTarget == null && fileSearchQuery.mode == FileSearchMode.Default) FontWeight.Normal else FontWeight.Bold,
                                 fontSize = 12.sp,
                                 maxLines = 1,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).then(
+                                    if (fileActionTarget != null) Modifier.clickable { emptyBackspace() }
+                                    else Modifier,
+                                ),
                             )
-                            Text(
-                                text = fileSortMode.label,
-                                color = OverlayAccent,
-                                fontFamily = OverlayMono,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                modifier = Modifier.clickable { fileSortMode = fileSortMode.next() }
-                                    .padding(horizontal = 8.dp, vertical = 5.dp),
-                            )
+                            if (fileActionTarget == null) {
+                                Text(
+                                    text = fileSortMode.label,
+                                    color = OverlayAccent,
+                                    fontFamily = OverlayMono,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    modifier = Modifier.clickable { fileSortMode = fileSortMode.next() }
+                                        .padding(horizontal = 7.dp, vertical = 5.dp),
+                                )
+                            }
                         }
                     } else Text(
                         text = "▸ ${when {
@@ -917,6 +1504,11 @@ fun CommandOverlayApp(
                             }
                             plainAliasDiscovery -> "open app"
                             taskerResults.isNotEmpty() -> "run Tasker task"
+                            aliasMatch?.target?.id == "control" -> "trigger control"
+                            appListMode == AppListMode.All -> "all apps · ${apps.size}"
+                            appListMode == AppListMode.Recents -> "recent apps · ${apps.size}"
+                            todoistMode -> "todoist today · ${visibleTodoistTasks.size}"
+                            switcherMode -> "switch recent app · ${switcherTasks.size}"
                             activeKind == CommandKind.Apps && apps.getOrNull(selectedIndex)?.packageName?.startsWith("internal:web-search:") == true -> "search web"
                             activeKind == CommandKind.Ask && query.startsWith("??") -> "ask ChatGPT"
                             else -> overlayActionLabel(activeKind)
@@ -1021,7 +1613,11 @@ fun CommandOverlayApp(
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                         if (query.isEmpty()) {
                             Text(
-                                if (inGeminiConversation) "reply…"
+                                if (fileActionDetail != null) "left or back to actions"
+                                else if (fileActionTarget != null) "type to filter actions…"
+                                else if (inGeminiConversation) "reply…"
+                                else if (todoistMode) "filter tasks…"
+                                else if (switcherMode) "type to filter apps…"
                                 else if (selectedContact != null && activeKind == CommandKind.Message) "type message…"
                                 else if (selectedContact != null && activeKind == CommandKind.Call) "press enter to call"
                                 else "${FileSearchSettings.displayTrigger()} files  @ message  - todo  ${TriggerSettings.noteSymbol()} note  + timer  , calc  / web  ? ask",
@@ -1065,10 +1661,14 @@ fun CommandOverlayApp(
                                     val native = event.nativeKeyEvent
                                     val isBackspace = event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DEL
                                     val resultCount = when {
+                                        fileActionTarget != null -> if (fileActionDetail != null) 0 else fileActions.size
+                                        todoistMode -> visibleTodoistTasks.size
+                                        switcherMode -> switcherTasks.size
                                         plainAliasDiscovery -> aliasSuggestions.size + apps.size
                                         taskerResults.isNotEmpty() -> taskerResults.size
                                         aliasSuggestions.isNotEmpty() -> aliasSuggestions.size
                                         aliasMatch?.target?.id == "settings" -> settingsResults.size
+                                        aliasMatch?.target?.id == "control" -> controlResults.size
                                         shortcutQuery != null -> shortcutResults.size
                                         taskerResults.isNotEmpty() -> taskerResults.size
                                         aliasMatch != null -> 1
@@ -1107,6 +1707,28 @@ fun CommandOverlayApp(
                                         setEditorQuery("")
                                         notice = null
                                         true
+                                    } else if (event.type == KeyEventType.KeyDown && fileActionTarget == null && activeKind == CommandKind.Files && files.isNotEmpty() &&
+                                        native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+                                    ) {
+                                        files.getOrNull(selectedIndex.coerceIn(0, files.lastIndex))?.let(::openFileActions)
+                                        true
+                                    } else if (event.type == KeyEventType.KeyDown && fileActionTarget == null && activeKind == CommandKind.Files && files.isNotEmpty() &&
+                                        native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT
+                                    ) {
+                                        files.getOrNull(selectedIndex.coerceIn(0, files.lastIndex))?.let(::openFileQuickPreview)
+                                        true
+                                    } else if (event.type == KeyEventType.KeyDown && fileActionTarget != null && native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                                        emptyBackspace()
+                                    } else if (event.type == KeyEventType.KeyDown && switcherMode && native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && resultCount > 0) {
+                                        val next = (selectedIndex + 1).coerceAtMost(resultCount - 1)
+                                        if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
+                                        selectedIndex = next
+                                        true
+                                    } else if (event.type == KeyEventType.KeyDown && switcherMode && native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && resultCount > 0) {
+                                        val next = (selectedIndex - 1).coerceAtLeast(0)
+                                        if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
+                                        selectedIndex = next
+                                        true
                                     } else if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN && resultCount > 0) {
                                         val next = (selectedIndex + 1).coerceAtMost(resultCount - 1)
                                         if (next != selectedIndex) SoundFeedback.play(engine.context, CommandSound.Step)
@@ -1118,7 +1740,7 @@ fun CommandOverlayApp(
                                         selectedIndex = next
                                         true
                                     } else if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER && actionReady) {
-                                        execute()
+                                        submitFromEditor(native.isShiftPressed)
                                         true
                                     } else if (event.type == KeyEventType.KeyDown && isBackspace && query.isEmpty()) {
                                         emptyBackspace()
@@ -1143,11 +1765,18 @@ fun CommandOverlayApp(
                                 )
                                 aliasMatch != null -> AliasPrefixTransformation(aliasMatch.alias.length)
                                 activeKind == CommandKind.Todo -> TodoistRecognitionTransformation
+                                activeKind == CommandKind.Files && fileSearchQuery.mode != FileSearchMode.Default -> FileFilterPrefixTransformation(
+                                    when (fileSearchQuery.mode) {
+                                        FileSearchMode.FilesOnly -> FileSearchSettings.filesOnlyPrefix.value.length
+                                        FileSearchMode.FoldersOnly -> FileSearchSettings.foldersOnlyPrefix.value.length
+                                        FileSearchMode.Default -> 0
+                                    },
+                                )
                                 else -> CommandPrefixTransformation
                             }),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = { execute() }),
+                            keyboardActions = KeyboardActions(onGo = { submitFromEditor() }),
                         )
                     }
                 AnimatedVisibility(
@@ -1162,7 +1791,7 @@ fun CommandOverlayApp(
                             modifier = Modifier
                                 .padding(start = 8.dp)
                                 .size(42.dp)
-                                .clickable(enabled = actionReady) { execute() },
+                                .clickable(enabled = actionReady) { submitFromEditor() },
                         )
                 }
             }
@@ -1174,12 +1803,57 @@ fun CommandOverlayApp(
 }
 
 @Composable
+private fun OverlaySwitcherResults(
+    tasks: List<SwitcherTask>,
+    selectedIndex: Int,
+    palette: OverlayPalette,
+    client: TaskSwitcherClient,
+    onClick: (SwitcherTask) -> Unit,
+    onDismiss: (SwitcherTask) -> Unit,
+) {
+    val state = rememberLazyListState()
+    LaunchedEffect(selectedIndex, tasks.size) {
+        if (selectedIndex in tasks.indices) state.animateScrollToItem(selectedIndex)
+    }
+    if (tasks.isEmpty()) {
+        Text(
+            "No matching recent apps",
+            color = palette.secondary,
+            fontFamily = OverlayMono,
+            fontSize = 14.sp,
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+        )
+        return
+    }
+    LazyRow(
+        state = state,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().height(230.dp),
+    ) {
+        itemsIndexed(tasks, key = { _, task -> task.taskId }) { index, task ->
+            SwitcherCard(
+                task = task,
+                selected = index == selectedIndex,
+                accent = OverlayAccent,
+                tile = palette.tile,
+                text = palette.text,
+                border = palette.border,
+                client = client,
+                onDismiss = { onDismiss(task) },
+                open = { onClick(task) },
+            )
+        }
+    }
+}
+
+@Composable
 private fun AskWaitingPreview(
     prompt: String,
     palette: OverlayPalette,
     timedOut: Boolean,
     onOpenChatGpt: () -> Unit,
 ) {
+    val context = LocalContext.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 5.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             Text(
@@ -1519,7 +2193,8 @@ private fun OverlayAppResultRow(
     onLongClick: (AppResult) -> Unit,
 ) {
     val glowMode = AppearanceSettings.appGlowMode.value
-    val appColor = app.adaptiveColor?.let { Color(it) } ?: OverlayAccent
+    val isAppListMode = app.packageName in setOf("internal:all-apps", "internal:recent-apps", "internal:switcher", "internal:todoist-tasks")
+    val appColor = if (isAppListMode) OverlayAccent else app.adaptiveColor?.let { Color(it) } ?: OverlayAccent
     val visualMode = if (glowMode == AppGlowMode.Off) AppGlowMode.Reduced else glowMode
     val shape = RoundedCornerShape(15.dp)
     val selectedBrush = when (visualMode) {
@@ -1566,7 +2241,27 @@ private fun OverlayAppResultRow(
                 ).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            RealAppIcon(app.icon, app.label, palette, Modifier.size(42.dp))
+            if (isAppListMode) {
+                Box(
+                    Modifier.size(42.dp).clip(RoundedCornerShape(12.dp))
+                        .background(OverlayAccent.copy(alpha = .16f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        when (app.packageName) {
+                            "internal:all-apps" -> Icons.Outlined.Apps
+                            "internal:switcher" -> Icons.Outlined.ViewCarousel
+                            "internal:todoist-tasks" -> Icons.Outlined.CheckCircle
+                            else -> Icons.Outlined.History
+                        },
+                        app.label,
+                        tint = OverlayAccent,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            } else {
+                RealAppIcon(app.icon, app.label, palette, Modifier.size(42.dp))
+            }
             Text(app.label, Modifier.padding(start = 13.dp).weight(1f), color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             if (selected) Text("↵", color = if (visualMode == AppGlowMode.Full) Color.White else selectionColor, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
         }
@@ -1658,6 +2353,99 @@ private fun OverlaySettingsResults(
 }
 
 @Composable
+private fun OverlayControlResults(
+    results: List<ControlResult>,
+    selectedIndex: Int,
+    visibleRowCount: Int,
+    palette: OverlayPalette,
+    feedback: Pair<ControlKind, String>?,
+    onClick: (ControlResult) -> Unit,
+) {
+    val context = LocalContext.current
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, results.firstOrNull()?.kind, results.size) {
+        if (selectedIndex in results.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth().heightIn(max = resultListHeight(results.size, visibleRowCount)),
+        state = listState,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        itemsIndexed(results, key = { _, result -> result.kind }) { index, result ->
+            val hasFeedback = feedback?.first == result.kind
+            val suppliedIcon = remember(result.kind) { aguiControlIcon(context, result.kind) }
+            val icon = when (result.kind) {
+                ControlKind.Flashlight -> Icons.Outlined.FlashlightOn
+                ControlKind.Rotation -> Icons.Outlined.ScreenRotation
+                ControlKind.Brightness -> Icons.Outlined.Brightness6
+                ControlKind.Volume -> Icons.Outlined.VolumeUp
+                ControlKind.Play -> Icons.Rounded.PlayArrow
+                ControlKind.Pause -> Icons.Rounded.Pause
+                ControlKind.Next -> Icons.Rounded.SkipNext
+                ControlKind.RingerMode -> Icons.Outlined.NotificationsActive
+                ControlKind.Theme -> Icons.Outlined.DarkMode
+                ControlKind.BatteryProtection -> Icons.Outlined.BatteryChargingFull
+                ControlKind.Caffeine -> Icons.Outlined.Coffee
+                ControlKind.ScreenDimmer -> Icons.Outlined.BrightnessLow
+                ControlKind.QrScanner -> Icons.Outlined.QrCodeScanner
+                ControlKind.ScreenRecord -> Icons.Outlined.ScreenShare
+                ControlKind.MiniMode -> Icons.Outlined.StayCurrentPortrait
+                ControlKind.ScrollAssistant -> Icons.Outlined.Swipe
+            }
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
+                    .background(
+                        when {
+                            hasFeedback -> OverlayAccent.copy(alpha = .34f)
+                            index == selectedIndex -> OverlayAccent.copy(alpha = .22f)
+                            else -> palette.tile
+                        },
+                    )
+                    .border(
+                        if (hasFeedback) 2.dp else 1.dp,
+                        if (index == selectedIndex || hasFeedback) OverlayAccent else palette.border,
+                        RoundedCornerShape(15.dp),
+                    )
+                    .clickable { onClick(result) }.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(OverlayAccent.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
+                    if (suppliedIcon != null) {
+                        val painter = remember(suppliedIcon) { BitmapPainter(suppliedIcon.toBitmap(72, 72).asImageBitmap()) }
+                        Image(painter, result.label, Modifier.size(22.dp), colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(OverlayAccent))
+                    } else Icon(icon, result.label, tint = OverlayAccent, modifier = Modifier.size(22.dp))
+                }
+                Column(Modifier.padding(start = 13.dp).weight(1f)) {
+                    Text(result.label, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text(
+                        if (hasFeedback) feedback.second else result.subtitle,
+                        color = if (hasFeedback) OverlayAccent else palette.secondary,
+                        fontFamily = OverlayMono,
+                        fontWeight = if (hasFeedback) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = 10.sp,
+                    )
+                }
+                if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+            }
+        }
+    }
+}
+
+private fun aguiControlIcon(context: android.content.Context, kind: ControlKind): Drawable? {
+    val name = when (kind) {
+        ControlKind.MiniMode -> "ic_mini_mode"
+        ControlKind.ScrollAssistant -> "ic_touchpad_qs"
+        else -> return null
+    }
+    return runCatching {
+        val systemUi = context.createPackageContext("com.android.systemui", 0)
+        val id = systemUi.resources.getIdentifier(name, "drawable", "com.android.systemui")
+        id.takeIf { it != 0 }?.let(systemUi::getDrawable)
+    }.getOrNull()
+}
+
+@Composable
 private fun OverlayAliasSuggestions(
     suggestions: List<AliasSuggestion>,
     selectedIndex: Int,
@@ -1702,7 +2490,11 @@ private fun OverlayAliasSuggestionRow(
             .clickable { onClick(suggestion) }.padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RealAppIcon(icon, suggestion.label, palette, Modifier.size(42.dp))
+        if (suggestion.label == "Quick Controls") {
+            Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(OverlayAccent.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Tune, "Quick Controls", tint = OverlayAccent, modifier = Modifier.size(24.dp))
+            }
+        } else RealAppIcon(icon, suggestion.label, palette, Modifier.size(42.dp))
         Column(Modifier.padding(start = 13.dp).weight(1f)) {
             Text(suggestion.label, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             Text(
@@ -1758,6 +2550,134 @@ private fun OverlayTaskerResults(
     }
 }
 
+private fun TodoistTask.isOverdue(): Boolean = dueDate?.take(10)?.let { it < java.time.LocalDate.now().toString() } == true
+
+private fun TodoistTask.dueDateLabel(): String {
+    val date = runCatching { java.time.LocalDate.parse(dueDate?.take(10)) }.getOrNull()
+    return when {
+        date == null -> "today"
+        date == java.time.LocalDate.now() -> "today"
+        else -> date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))
+    }
+}
+
+private fun TodoistTask.dueTimeLabel(context: android.content.Context): String? {
+    val raw = dueDateTime ?: return null
+    val instant = runCatching { java.time.OffsetDateTime.parse(raw).toInstant() }
+        .recoverCatching { java.time.LocalDateTime.parse(raw).atZone(java.time.ZoneId.systemDefault()).toInstant() }
+        .getOrNull() ?: return raw.substringAfter('T', "").take(5).takeIf(String::isNotBlank)
+    return android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date.from(instant))
+}
+
+@Composable
+private fun OverlayTodoistTasks(
+    tasks: List<TodoistTask>,
+    selectedIndex: Int,
+    visibleRowCount: Int,
+    palette: OverlayPalette,
+    loading: Boolean,
+    error: String?,
+    completingTaskId: String?,
+    onOpen: (TodoistTask) -> Unit,
+    onComplete: (TodoistTask) -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    if (tasks.isEmpty()) {
+        OverlayNotice(error ?: if (loading) "loading today’s tasks…" else "nothing due today", palette)
+        return
+    }
+    val state = rememberLazyListState()
+    LaunchedEffect(selectedIndex, tasks.size) {
+        if (selectedIndex in tasks.indices) state.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LazyColumn(
+        // Task rows can contain a section label plus separate date and time
+        // metadata, so they are taller than standard app results. Let a short
+        // filtered list measure to its content while keeping a bounded viewport.
+        Modifier.fillMaxWidth().heightIn(
+            max = resultListHeight(tasks.size, visibleRowCount) + 38.dp,
+        ),
+        state = state,
+        contentPadding = PaddingValues(top = 8.dp, bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        itemsIndexed(tasks, key = { _, task -> task.id }) { index, task ->
+            Column {
+                val completing = task.id == completingTaskId
+                val section = if (task.isOverdue()) "overdue" else "today"
+                val previousSection = tasks.getOrNull(index - 1)?.let { if (it.isOverdue()) "overdue" else "today" }
+                if (index == 0 || section != previousSection) {
+                    Row(Modifier.fillMaxWidth().padding(start = 5.dp, end = 7.dp, bottom = 5.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(section, color = if (section == "overdue") Color(0xFFFF5B65) else OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        Text("${tasks.count { if (section == "overdue") it.isOverdue() else !it.isOverdue() }} tasks", color = palette.secondary, fontFamily = OverlayMono, fontSize = 10.sp)
+                    }
+                }
+                val completionGlow by animateFloatAsState(
+                    targetValue = if (completing) 1f else 0f,
+                    animationSpec = tween(125),
+                    label = "todoist-task-completion",
+                )
+                val taskShape = RoundedCornerShape(15.dp)
+                Box(Modifier.fillMaxWidth()) {
+                    if (completionGlow > 0f) {
+                        Box(
+                            Modifier.matchParentSize()
+                                .blur(12.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                                .border(4.dp, OverlayAccent.copy(alpha = .78f * completionGlow), taskShape),
+                        )
+                    }
+                    Row(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(15.dp))
+                        .background(palette.tile)
+                        .background(OverlayAccent.copy(alpha = .30f * completionGlow))
+                        .border(1.dp, if (completing || index == selectedIndex) OverlayAccent.copy(alpha = .88f) else palette.border, taskShape)
+                        .clickable { onOpen(task) }.padding(horizontal = 12.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        if (completing) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                        contentDescription = "Complete task",
+                        tint = when (task.priority) {
+                            4 -> Color(0xFFFF5B65)
+                            3 -> Color(0xFFFF9A42)
+                            2 -> Color(0xFF54A8FF)
+                            else -> if (index == selectedIndex) OverlayAccent else palette.secondary
+                        },
+                        modifier = Modifier.size(27.dp).clickable { onComplete(task) },
+                    )
+                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                        Text(task.content, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val secondary = listOfNotNull(task.project.takeIf(String::isNotBlank), task.labels.takeIf(List<String>::isNotEmpty)?.joinToString(" · ")).joinToString("  ·  ")
+                        if (secondary.isNotBlank()) Text(secondary, color = palette.secondary, fontFamily = OverlayMono, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        if (task.isOverdue()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Event, null, tint = Color(0xFFFF5B65), modifier = Modifier.size(15.dp))
+                                Text(task.dueDateLabel(), color = Color(0xFFFF5B65), fontFamily = OverlayMono, fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+                            }
+                        }
+                        task.dueTimeLabel(context)?.let { dueTime ->
+                            Row(Modifier.padding(top = if (task.isOverdue()) 4.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Schedule, null, tint = palette.secondary, modifier = Modifier.size(15.dp))
+                                Text(dueTime, color = palette.secondary, fontFamily = OverlayMono, fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+                            }
+                        }
+                        if (task.recurring) Icon(Icons.Outlined.Repeat, "Recurring", tint = palette.secondary, modifier = Modifier.padding(top = 4.dp).size(14.dp))
+                    }
+                    // Keep this slot present on every row so moving selection
+                    // never shifts the date and time column sideways.
+                    Box(Modifier.width(29.dp), contentAlignment = Alignment.CenterEnd) {
+                        if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+                    }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private fun resultViewportHeight(visibleRowCount: Int) =
     (visibleRowCount * 66 + (visibleRowCount - 1).coerceAtLeast(0) * 8).dp
 
@@ -1768,14 +2688,15 @@ private fun OverlayFileResults(
     visibleRowCount: Int,
     palette: OverlayPalette,
     sortMode: FileSortMode,
+    listState: LazyListState,
     onVisibleIndicesChanged: (List<Int>) -> Unit,
+    onLongClick: (FileResult) -> Unit,
     onClick: (FileResult) -> Unit,
 ) {
     if (files.isEmpty()) {
         OverlayNotice("no matching files", palette)
         return
     }
-    val listState = rememberLazyListState()
     LaunchedEffect(selectedIndex, files.firstOrNull()?.uri, files.size) {
         if (selectedIndex in files.indices) listState.keepSelectionVisible(selectedIndex, visibleRowCount)
     }
@@ -1794,7 +2715,7 @@ private fun OverlayFileResults(
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(palette.tile)
                 .border(1.dp, if (index == selectedIndex) OverlayAccent.copy(alpha = .7f) else palette.border, RoundedCornerShape(15.dp))
-                .clickable { onClick(file) }.padding(12.dp),
+                .combinedClickable(onClick = { onClick(file) }, onLongClick = { onLongClick(file) }).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (file.thumbnail != null) Image(
@@ -1808,7 +2729,12 @@ private fun OverlayFileResults(
                     contentDescription = "Folder",
                     tint = if (index == selectedIndex) OverlayAccent else palette.secondary,
                     modifier = Modifier.size(22.dp),
-                ) else Text("▧", color = if (index == selectedIndex) OverlayAccent else palette.secondary, fontFamily = OverlayMono, fontSize = 20.sp)
+                ) else Icon(
+                    fileTypeIcon(file),
+                    contentDescription = file.mimeType ?: "File",
+                    tint = if (index == selectedIndex) OverlayAccent else palette.secondary,
+                    modifier = Modifier.size(22.dp),
+                )
             }
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(file.name, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1830,8 +2756,131 @@ private fun OverlayFileResults(
                 )
                 if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
             }
+            Icon(
+                Icons.Outlined.MoreVert,
+                contentDescription = "File actions",
+                tint = if (index == selectedIndex) OverlayAccent else palette.secondary.copy(alpha = .72f),
+                modifier = Modifier.padding(start = 5.dp).size(25.dp).clickable { onLongClick(file) },
+            )
         }
     }
+    }
+}
+
+private fun fileTypeIcon(file: FileResult): ImageVector {
+    val mime = file.mimeType.orEmpty().lowercase()
+    val extension = file.name.substringAfterLast('.', "").lowercase()
+    return when {
+        mime == "application/pdf" || extension == "pdf" -> Icons.Outlined.PictureAsPdf
+        extension in setOf("epub", "mobi", "azw", "azw3", "fb2") -> Icons.Outlined.MenuBook
+        mime.startsWith("audio/") -> Icons.Outlined.AudioFile
+        mime.startsWith("video/") -> Icons.Outlined.VideoFile
+        mime.contains("zip") || mime.contains("compressed") || extension in setOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz") -> Icons.Outlined.Archive
+        mime.contains("spreadsheet") || mime.contains("excel") || extension in setOf("xls", "xlsx", "ods", "csv", "tsv") -> Icons.Outlined.TableChart
+        mime.contains("presentation") || mime.contains("powerpoint") || extension in setOf("ppt", "pptx", "odp") -> Icons.Outlined.Slideshow
+        mime.startsWith("text/") && extension in setOf("kt", "java", "js", "ts", "py", "html", "css", "json", "xml", "md", "sh", "yaml", "yml") -> Icons.Outlined.Code
+        mime.startsWith("text/") || mime.contains("document") || mime.contains("word") || extension in setOf("doc", "docx", "odt", "rtf", "txt") -> Icons.Outlined.Description
+        else -> Icons.Outlined.InsertDriveFile
+    }
+}
+
+@Composable
+private fun OverlayFileActions(
+    target: FileResult,
+    actions: List<FileAction>,
+    selectedIndex: Int,
+    visibleRowCount: Int,
+    palette: OverlayPalette,
+    onClick: (FileAction) -> Unit,
+) {
+    if (actions.isEmpty()) {
+        OverlayNotice("no matching actions", palette)
+        return
+    }
+    val state = rememberLazyListState()
+    LaunchedEffect(selectedIndex, actions.size) {
+        if (selectedIndex in actions.indices) state.keepSelectionVisible(selectedIndex, visibleRowCount)
+    }
+    LazyColumn(
+        Modifier.fillMaxWidth().height(resultListHeight(actions.size, visibleRowCount)),
+        state = state,
+        contentPadding = PaddingValues(bottom = ResultViewportBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        itemsIndexed(actions, key = { _, action -> action.name }) { index, action ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(palette.tile)
+                    .border(1.dp, if (index == selectedIndex) OverlayAccent.copy(alpha = .76f) else palette.border, RoundedCornerShape(15.dp))
+                    .clickable { onClick(action) }.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(38.dp).clip(RoundedCornerShape(11.dp))
+                        .background(if (index == selectedIndex) OverlayAccent.copy(alpha = .16f) else palette.panel),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = when (action) {
+                            FileAction.Open -> Icons.Outlined.InsertDriveFile
+                            FileAction.OpenWith -> Icons.Outlined.OpenInNew
+                            FileAction.Reveal -> Icons.Outlined.FolderOpen
+                            FileAction.Preview -> Icons.Outlined.Visibility
+                            FileAction.Info -> Icons.Outlined.Info
+                            FileAction.Delete -> Icons.Outlined.Delete
+                        },
+                        contentDescription = action.title,
+                        tint = if (action == FileAction.Delete) Color(0xFFFF4D3A) else if (index == selectedIndex) OverlayAccent else palette.secondary,
+                        modifier = Modifier.size(21.dp),
+                    )
+                }
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    Text(action.title, color = if (action == FileAction.Delete) Color(0xFFFF4D3A) else palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(action.subtitle, color = palette.secondary, fontFamily = OverlayMono, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverlayFileActionDetail(
+    target: FileResult,
+    detail: String,
+    preview: android.graphics.Bitmap?,
+    palette: OverlayPalette,
+    onConfirmDelete: (() -> Unit)? = null,
+) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(palette.tile)
+            .border(1.dp, OverlayAccent.copy(alpha = .65f), RoundedCornerShape(15.dp)).padding(14.dp),
+    ) {
+        Text(target.name, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(8.dp))
+        if (preview != null) {
+            Image(
+                preview.asImageBitmap(),
+                target.name,
+                Modifier.fillMaxWidth().heightIn(min = 130.dp, max = 250.dp).clip(RoundedCornerShape(11.dp)),
+                contentScale = ContentScale.Fit,
+            )
+        } else {
+            Text(detail, color = palette.secondary, fontFamily = OverlayMono, fontSize = 12.sp, lineHeight = 18.sp)
+            if (onConfirmDelete != null) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "delete file",
+                    color = Color(0xFFFF4D3A),
+                    fontFamily = OverlayMono,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, Color(0xFFFF4D3A).copy(alpha = .72f), RoundedCornerShape(10.dp))
+                        .clickable(onClick = onConfirmDelete)
+                        .padding(horizontal = 13.dp, vertical = 8.dp),
+                )
+            }
+        }
     }
 }
 
@@ -2150,6 +3199,22 @@ private class AliasPrefixTransformation(private val prefixLength: Int) : VisualT
                     0,
                     prefixLength,
                 )
+            }
+        }
+        return TransformedText(styled, OffsetMapping.Identity)
+    }
+}
+
+private class FileFilterPrefixTransformation(private val prefixLength: Int) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val styled = buildAnnotatedString {
+            append(text)
+            if (text.isNotEmpty()) {
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 0, 1)
+            }
+            val end = (1 + prefixLength).coerceAtMost(text.length)
+            if (end > 1) {
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 1, end)
             }
         }
         return TransformedText(styled, OffsetMapping.Identity)

@@ -22,11 +22,17 @@ object HubSettings {
     private const val KEY_SHOW_SUMMARIES = "show_summaries"
     private const val KEY_QUICK_KEYBOARD_NAVIGATION = "quick_keyboard_navigation"
     private const val KEY_CLOSE_REPLY_AFTER_SENDING = "close_reply_after_sending"
+    private const val KEY_SHOW_NOTIFICATION_IMAGES = "show_notification_images"
+    private const val KEY_TINT_NOTIFICATION_IMAGES = "tint_notification_images"
+    private const val KEY_NOTIFICATION_IMAGES_ON_RIGHT = "notification_images_on_right"
     private const val TAB_PREFIX = "tab_visibility_"
     val optionalTabs = listOf("messages", "calls", "email", "finance", "tasks", "apps", "flagged", "summaries")
     val tabVisibility = mutableStateOf<Map<String, HubTabVisibility>>(emptyMap())
     val quickKeyboardNavigation = mutableStateOf(false)
     val closeReplyAfterSending = mutableStateOf(false)
+    val showNotificationImages = mutableStateOf(false)
+    val tintNotificationImages = mutableStateOf(false)
+    val notificationImagesOnRight = mutableStateOf(false)
 
     fun initialize(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -39,6 +45,9 @@ object HubSettings {
         }
         quickKeyboardNavigation.value = prefs.getBoolean(KEY_QUICK_KEYBOARD_NAVIGATION, false)
         closeReplyAfterSending.value = prefs.getBoolean(KEY_CLOSE_REPLY_AFTER_SENDING, false)
+        showNotificationImages.value = prefs.getBoolean(KEY_SHOW_NOTIFICATION_IMAGES, false)
+        tintNotificationImages.value = prefs.getBoolean(KEY_TINT_NOTIFICATION_IMAGES, false)
+        notificationImagesOnRight.value = prefs.getBoolean(KEY_NOTIFICATION_IMAGES_ON_RIGHT, false)
     }
 
     fun visibility(tab: String): HubTabVisibility = tabVisibility.value[tab] ?: HubTabVisibility.Auto
@@ -59,6 +68,24 @@ object HubSettings {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_CLOSE_REPLY_AFTER_SENDING, enabled).apply()
         closeReplyAfterSending.value = enabled
+    }
+
+    fun saveShowNotificationImages(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_SHOW_NOTIFICATION_IMAGES, enabled).apply()
+        showNotificationImages.value = enabled
+    }
+
+    fun saveTintNotificationImages(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_TINT_NOTIFICATION_IMAGES, enabled).apply()
+        tintNotificationImages.value = enabled
+    }
+
+    fun saveNotificationImagesOnRight(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_NOTIFICATION_IMAGES_ON_RIGHT, enabled).apply()
+        notificationImagesOnRight.value = enabled
     }
 }
 

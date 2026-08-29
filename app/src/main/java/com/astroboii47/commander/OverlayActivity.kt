@@ -17,6 +17,7 @@ class OverlayActivity : ComponentActivity() {
     private val askPreviewState = mutableStateOf<String?>(null)
     private val askPromptState = mutableStateOf<String?>(null)
     private val askWaitingState = mutableStateOf(false)
+    private var currentQuery = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +40,8 @@ class OverlayActivity : ComponentActivity() {
         )
 
         val engine = CommandEngine(this)
+        currentQuery = savedInstanceState?.getString(STATE_QUERY)
+            ?: intent.getStringExtra(EXTRA_INITIAL_QUERY).orEmpty()
         askPreviewState.value = intent.getStringExtra(EXTRA_ASK_PREVIEW)
             ?: ChatGptNotificationBridge.consumeResponse(this)
         askPromptState.value = intent.getStringExtra(EXTRA_ASK_PROMPT)
@@ -50,13 +53,24 @@ class OverlayActivity : ComponentActivity() {
             CommandOverlayApp(
                 engine = engine,
                 onDismiss = ::finish,
-                initialQuery = intent.getStringExtra(EXTRA_INITIAL_QUERY).orEmpty(),
+                initialQuery = currentQuery,
                 initialAskPreview = askPreviewState.value,
                 initialAskPrompt = askPromptState.value,
                 initialAskWaiting = askWaitingState.value,
+                initialSwitcherMode = intent.getBooleanExtra(EXTRA_START_SWITCHER, false),
             )
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_QUERY, currentQuery)
+        super.onSaveInstanceState(outState)
+    }
+
+    fun preserveQueryForMiniMode(value: String) {
+        currentQuery = value
+        intent.putExtra(EXTRA_INITIAL_QUERY, value)
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -84,6 +98,7 @@ class OverlayActivity : ComponentActivity() {
 
     @Suppress("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (SwitcherKeyBridge.dispatch(event)) return true
         if (HomeTypingHandoff.isCollecting() && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             if (event.keyCode == KeyEvent.KEYCODE_DEL && HomeTypingHandoff.backspace()) return true
             if (event.isCtrlPressed || event.isMetaPressed) return super.dispatchKeyEvent(event)
@@ -102,5 +117,7 @@ class OverlayActivity : ComponentActivity() {
         const val EXTRA_ASK_PREVIEW = "ask_preview"
         const val EXTRA_ASK_WAITING = "ask_waiting"
         const val EXTRA_ASK_PROMPT = "ask_prompt"
+        const val EXTRA_START_SWITCHER = "commander_start_switcher"
+        private const val STATE_QUERY = "commander_query"
     }
 }

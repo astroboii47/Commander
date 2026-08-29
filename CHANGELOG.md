@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.5
+
+- Added a native Todoist Tasks view for today's and overdue tasks, with filtering, keyboard navigation, due dates and times, project and priority details, direct completion, and Todoist hand-off.
+- Added Quick Controls for flashlight, rotation, brightness, volume, media, ringer mode, theme, screen recording, QR scanning, caffeine, screen dimming, Mini Mode, Scroll Assistant, and battery protection where supported.
+- Added All Apps, Recent Apps, and App Switcher views with keyboard filtering, live previews, app icons, and swipe-up dismissal from the switcher.
+- Added a keyboard-driven file actions menu with Open, Open in app, Preview, Reveal in folder, File info, and Delete.
+- Added file-type icons and viewport-aware preview loading for long file and folder result lists.
+- Added app-provided notification actions, Snooze, matching action icons, inline action feedback, and keyboard shortcuts throughout Commander Hub.
+- Added expandable Hub notification details, notification profile images, optional accent tinting, swipe-to-flag, and improved notification metadata alignment.
+- Added minimal scroll indicators for long Hub lists and fixed category clipping on smaller displays.
+- Improved Hub notification title extraction, deduplication, reply continuity, action-menu sizing, and return-to-Hub behaviour.
+- Improved plain Tasker aliases so partial matches rank naturally alongside apps and exact matches run immediately.
+- Fixed keyboard navigation and selection visibility across long result lists, action menus, Tasks, and App Switcher.
+- Fixed filtered task rows being clipped, shifting due-date columns, and command-bar completion feedback appearing during task completion.
+
 ## 0.1.0-alpha.4.1
 
 - Added a unified Hub actions menu with Open, Reply, Dismiss, app-provided notification actions, and notification ignore controls.
