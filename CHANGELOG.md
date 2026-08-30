@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.5.1
+
+- Fixed generic Commander and keyboard shortcut launches sometimes opening App Switcher instead of Commander Hub.
+- Restored Commander Hub as the unambiguous primary launcher destination.
+- Added a dedicated App Switcher shortcut for keyboard mappers, launchers, and automation tools that support Android app shortcuts.
+- Fixed Recent Apps occasionally restoring `rec` in the filter field after opening from home typing.
+
 ## 0.1.0-alpha.5
 
 ### Added

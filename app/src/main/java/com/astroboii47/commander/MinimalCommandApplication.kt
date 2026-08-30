@@ -49,6 +49,16 @@ class MinimalCommandApplication : Application() {
             .setIcon(Icon.createWithResource(this, R.drawable.ic_commander_bar))
             .setIntent(Intent(Intent.ACTION_VIEW).setClass(this, SettingsActivity::class.java))
             .build()
+        val switcher = ShortcutInfo.Builder(this, SWITCHER_SHORTCUT_ID)
+            .setShortLabel("App Switcher")
+            .setLongLabel("Open Commander App Switcher")
+            .setIcon(Icon.createWithResource(this, R.drawable.ic_commander_bar))
+            .setIntent(
+                Intent("com.astroboii47.commander.OPEN_SWITCHER")
+                    .setClass(this, SwitcherActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            .build()
         val home = ShortcutInfo.Builder(this, HOME_SHORTCUT_ID)
             .setShortLabel("Commander Home")
             .setLongLabel("Open Commander Home")
@@ -57,7 +67,7 @@ class MinimalCommandApplication : Application() {
             .build()
         runCatching {
             manager.removeAllDynamicShortcuts()
-            val shortcuts = mutableListOf(commandBar, hub, settings)
+            val shortcuts = mutableListOf(commandBar, hub, switcher, settings)
             if (resources.getBoolean(R.bool.commander_home_launcher_enabled)) shortcuts.add(home)
             manager.addDynamicShortcuts(shortcuts)
         }
@@ -67,6 +77,7 @@ class MinimalCommandApplication : Application() {
         const val COMMAND_BAR_SHORTCUT_ID = "command_bar_dynamic"
         const val HUB_SHORTCUT_ID = "minimal_hub_dynamic"
         const val SETTINGS_SHORTCUT_ID = "command_settings_dynamic"
+        const val SWITCHER_SHORTCUT_ID = "app_switcher_dynamic"
         const val HOME_SHORTCUT_ID = "command_home_dynamic"
     }
 }

@@ -622,6 +622,7 @@ fun CommandOverlayApp(
             else -> null
         }
         if (mode != null) {
+            HomeTypingHandoff.finish()
             previousStageQuery = query
             appListMode = mode
             SoundFeedback.play(engine.context, CommandSound.Step)

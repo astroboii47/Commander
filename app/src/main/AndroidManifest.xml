@@ -115,7 +115,7 @@
             android:label="App Switcher"
             android:launchMode="singleTask"
             android:theme="@style/Theme.MinimalCommand.Overlay">
-            <intent-filter>
+            <intent-filter android:priority="-10">
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
@@ -156,7 +156,7 @@
             android:icon="@drawable/ic_commander_bar"
             android:label="Commander"
             android:targetActivity=".HubActivity">
-            <intent-filter>
+            <intent-filter android:priority="10">
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
