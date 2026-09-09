@@ -1,11 +1,13 @@
 package com.astroboii47.commander
 
 import android.content.Intent
+import android.content.ComponentName
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Base64
 import android.os.Bundle
 import android.provider.Settings
+import android.os.Environment
 import android.Manifest
 import android.content.pm.PackageManager
 import android.widget.Toast
@@ -17,6 +19,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,28 +34,55 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.CheckCircleOutline
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.Contacts
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.SettingsSuggest
+import androidx.compose.material.icons.outlined.AccessibilityNew
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 class SettingsActivity : ComponentActivity() {
+    internal var setupRevision by mutableIntStateOf(0)
     private var taskerPickerCallback: ((Intent?) -> Unit)? = null
     private var iconPickerPackage: String? = null
     private var iconPickerCallback: (() -> Unit)? = null
@@ -85,6 +115,11 @@ class SettingsActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { AccentSelectionProvider { TodoistSettingsScreen(this) } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        setupRevision++
     }
 
     fun pickTaskerTask(onPicked: (TaskerAlias?) -> Unit) {
@@ -154,6 +189,196 @@ class SettingsActivity : ComponentActivity() {
 }
 
 @Composable
+private fun SettingsSectionHeader(title: String, icon: ImageVector, accent: Color, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
+        Text(title, color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+private data class SettingsAnchors(
+    val setup: BringIntoViewRequester,
+    val backup: BringIntoViewRequester,
+    val ai: BringIntoViewRequester,
+    val messages: BringIntoViewRequester,
+    val hub: BringIntoViewRequester,
+    val tasks: BringIntoViewRequester,
+    val appearance: BringIntoViewRequester,
+    val files: BringIntoViewRequester,
+    val shortcuts: BringIntoViewRequester,
+    val aliases: BringIntoViewRequester,
+    val apps: BringIntoViewRequester,
+)
+
+private data class SettingsDestination(val label: String, val terms: String, val icon: ImageVector, val anchor: BringIntoViewRequester)
+
+private fun packageEnabledInSecureSetting(activity: SettingsActivity, setting: String): Boolean =
+    Settings.Secure.getString(activity.contentResolver, setting).orEmpty()
+        .split(':')
+        .mapNotNull(ComponentName::unflattenFromString)
+        .any { it.packageName == activity.packageName }
+
+@Composable
+private fun CommanderSetup(activity: SettingsActivity, accent: Color) {
+    @Suppress("UNUSED_VARIABLE") val refreshWhenReturningFromAndroidSettings = activity.setupRevision
+    val accessibilityEnabled = packageEnabledInSecureSetting(activity, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+    val notificationAccess = packageEnabledInSecureSetting(activity, "enabled_notification_listeners")
+    val contactsAccess = ActivityCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+    val fileAccess = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+
+    fun open(action: String) = activity.startActivity(Intent(action))
+    val rows = listOf(
+        Triple("App info & restricted settings", "Android permissions and battery settings", Icons.Outlined.SettingsSuggest) to {
+            activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", activity.packageName, null)
+            })
+        },
+        Triple("Accessibility", if (accessibilityEnabled) "Commander accessibility is enabled" else "Required for home typing, shortcuts and Key Control", Icons.Outlined.AccessibilityNew) to {
+            open(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        },
+        Triple("Notification access", if (notificationAccess) "Hub notification access is enabled" else "Required for Commander Hub and notification replies", Icons.Outlined.Notifications) to {
+            open(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        },
+        Triple("Contacts", if (contactsAccess) "Contact search is enabled" else "Required for names in @ messages and # calls", Icons.Outlined.Contacts) to {
+            if (!contactsAccess) activity.requestContactsAccess()
+        },
+        Triple("Files & folders", if (fileAccess) "File search access is enabled" else "Required to search all files and folders", Icons.Outlined.FolderOpen) to {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                activity.startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${activity.packageName}")))
+            }
+        },
+    )
+    val states = listOf<Boolean?>(null, accessibilityEnabled, notificationAccess, contactsAccess, fileAccess)
+    rows.forEachIndexed { index, (details, action) ->
+        val (title, subtitle, icon) = details
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).clickable(onClick = action)
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, null, tint = accent, modifier = Modifier.size(21.dp))
+            Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                Text(title, color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            states[index]?.let { enabled ->
+                Icon(if (enabled) Icons.Outlined.CheckCircle else Icons.Outlined.Cancel, null,
+                    tint = if (enabled) Color(0xFF55C98A) else Color(0xFFE06565), modifier = Modifier.size(20.dp))
+            } ?: Text("open →", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun SettingsNavigation(activity: SettingsActivity, accent: Color, anchors: SettingsAnchors) {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    val destinations = listOf(
+        SettingsDestination("Setup", "permissions accessibility app info restricted settings notification access contacts files", Icons.Outlined.SettingsSuggest, anchors.setup),
+        SettingsDestination("Commander Contacts", "people messages sms whatsapp messenger telegram contacts", Icons.Outlined.Contacts, anchors.messages),
+        SettingsDestination("Hub & command bar", "hub history notifications tabs keyboard navigation", Icons.Outlined.Dashboard, anchors.hub),
+        SettingsDestination("Appearance", "theme colour glow blur sound day night background", Icons.Outlined.Palette, anchors.appearance),
+        SettingsDestination("Shortcuts", "hardware key control tasker automations home typing", Icons.Outlined.Keyboard, anchors.shortcuts),
+        SettingsDestination("Tasks", "todoist task quick add", Icons.Outlined.CheckCircleOutline, anchors.tasks),
+        SettingsDestination("Files & folders", "files folders search sort", Icons.Outlined.FolderOpen, anchors.files),
+        SettingsDestination("Search aliases", "aliases triggers web maps gmail controls", Icons.Outlined.Search, anchors.aliases),
+        SettingsDestination("App search", "apps terms icons shortcuts controls", Icons.Outlined.Apps, anchors.apps),
+        SettingsDestination("Ask Gemini", "ai gemini api key chatgpt", Icons.Outlined.AutoAwesome, anchors.ai),
+        SettingsDestination("Backup & restore", "export import backup settings", Icons.Outlined.Backup, anchors.backup),
+    ).filter { query.isBlank() || "${it.label} ${it.terms}".contains(query.trim(), ignoreCase = true) }
+    Text("commander settings", color = Color(0xFFF4F1E9), fontSize = 30.sp, fontWeight = FontWeight.Bold)
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        Text("open home →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
+            activity.startActivity(Intent(activity, MainActivity::class.java))
+        })
+        Text("open hub →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
+            activity.startActivity(Intent(activity, HubActivity::class.java))
+        })
+    }
+    Spacer(Modifier.height(16.dp))
+    BasicTextField(
+        value = query,
+        onValueChange = { query = it },
+        singleLine = true,
+        textStyle = TextStyle(color = Color(0xFFF4F1E9), fontSize = 15.sp),
+        decorationBox = { inner ->
+            if (query.isEmpty()) Text("Find a setting or category…", color = Color(0xFF77736D), fontSize = 15.sp)
+            inner()
+        },
+        modifier = Modifier.fillMaxWidth().background(Color(0xFF111111), RoundedCornerShape(13.dp)).padding(14.dp),
+    )
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        destinations.forEach { destination ->
+            Row(
+                Modifier.clip(RoundedCornerShape(15.dp)).background(Color(0xFF111111))
+                    .border(1.dp, Color(0xFF292929), RoundedCornerShape(15.dp))
+                    .clickable {
+                        query = ""
+                        scope.launch { destination.anchor.bringIntoView() }
+                    }.padding(horizontal = 11.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Icon(destination.icon, null, tint = accent, modifier = Modifier.size(16.dp))
+                Text(destination.label, color = Color(0xFFF4F1E9), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF141414))
+            .border(1.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+            .clickable { activity.startActivity(Intent(activity, MessagingContactsActivity::class.java)) }.padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Contacts, null, tint = accent, modifier = Modifier.size(22.dp))
+        Column(Modifier.weight(1f).padding(start = 11.dp)) {
+            Text("Commander Contacts", color = Color(0xFFF4F1E9), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("People, app identities and messaging routes", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Text("→", color = accent, fontSize = 19.sp)
+    }
+}
+
+@Composable
+private fun HubHistorySettings(
+    activity: SettingsActivity,
+    accent: Color,
+    retention: HubHistoryRetention,
+    onRetentionChanged: (HubHistoryRetention) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).background(Color(0xFF111111))
+            .clickable { activity.startActivity(Intent(activity, HubHistoryActivity::class.java)) }.padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.History, null, tint = accent, modifier = Modifier.size(21.dp))
+        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+            Text("Notification history", color = Color(0xFFF4F1E9), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("Open encrypted Hub history", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Text("→", color = accent, fontSize = 19.sp)
+    }
+    Spacer(Modifier.height(16.dp))
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onRetentionChanged(retention.next()) }.padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Keep notification history", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Tap to cycle retention. History stays encrypted on this device.", color = Color(0xFF99958E), fontSize = 12.sp)
+        }
+        Text(retention.label, color = if (retention == HubHistoryRetention.Off) Color(0xFF77736D) else accent,
+            fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 10.dp))
+    }
+}
+
+@Composable
 private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var direct by remember { mutableStateOf(TodoistSettings.directEnabled(activity)) }
     var token by remember { mutableStateOf(TodoistSettings.token(activity)) }
@@ -169,17 +394,35 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var pickerBrightness by remember { mutableStateOf(initialHsv[2]) }
     var colorValid by remember { mutableStateOf(true) }
     var swapDotBang by remember { mutableStateOf(TriggerSettings.swapDotBang.value) }
-    var invertBlurDarkness by remember { mutableStateOf(AppearanceSettings.invertBlurDarkness.value) }
+    var blurStyle by remember { mutableStateOf(AppearanceSettings.blurStyle.value) }
+    var singleBlurStyle by remember { mutableStateOf(AppearanceSettings.singleBlurStyle.value) }
+    var darkBlurStyle by remember { mutableStateOf(AppearanceSettings.darkBlurStyle.value) }
+    var lightBlurStyle by remember { mutableStateOf(AppearanceSettings.lightBlurStyle.value) }
     var pulseConfirmation by remember { mutableStateOf(AppearanceSettings.pulseConfirmation.value) }
     var appGlowMode by remember { mutableStateOf(AppearanceSettings.appGlowMode.value) }
     var listAnimation by remember { mutableStateOf(AppearanceSettings.listAnimation.value) }
+    var timeTheme by remember { mutableStateOf(AppearanceSettings.timeTheme.value) }
+    var dayStart by remember { mutableStateOf(AppearanceSettings.dayStart.value) }
+    var nightStart by remember { mutableStateOf(AppearanceSettings.nightStart.value) }
+    var dayStyle by remember { mutableStateOf(AppearanceSettings.dayStyle.value) }
+    var nightStyle by remember { mutableStateOf(AppearanceSettings.nightStyle.value) }
+    var darkerBackground by remember { mutableStateOf(AppearanceSettings.darkerBackground.value) }
+    var backgroundDarkness by remember { mutableStateOf(AppearanceSettings.backgroundDarkness.value) }
     var soundFeedback by remember { mutableStateOf(SoundSettings.enabled.value) }
     var confirmationSound by remember { mutableStateOf(SoundSettings.confirmationStyle.value) }
     var soundVolume by remember { mutableStateOf(SoundSettings.volume.value) }
     var homeTyping by remember { mutableStateOf(HomeTypingSettings.enabled.value) }
+    var hardwareShortcutsEnabled by remember { mutableStateOf(HardwareShortcutSettings.enabled.value) }
+    var closeKeyControlAfterActivation by remember { mutableStateOf(KeyControlSettings.closeAfterActivation.value) }
+    var holdSwitcherMode by remember { mutableStateOf(HardwareShortcutSettings.holdSwitcher.value) }
+    var allowHardwareWhileTyping by remember { mutableStateOf(HardwareShortcutSettings.allowWhileTyping.value) }
+    val hardwareShortcutRevision by HardwareShortcutCapture.revision
+    val capturingHardwareShortcut by HardwareShortcutCapture.target
     var openSingleAppResult by remember { mutableStateOf(AppSearchSettings.openSingleResult.value) }
     var webFallback by remember { mutableStateOf(AppSearchSettings.webFallback.value) }
     var aliasSuggestions by remember { mutableStateOf(AppSearchSettings.aliasSuggestions.value) }
+    var appShortcutCategory by remember { mutableStateOf(AppSearchSettings.appShortcutCategory.value) }
+    var quickControlsCategory by remember { mutableStateOf(AppSearchSettings.quickControlsCategory.value) }
     var holdFirstForAlt by remember { mutableStateOf(HomeTypingSettings.holdFirstForAlt.value) }
     var hubTabModes by remember { mutableStateOf(HubSettings.tabVisibility.value) }
     var quickHubNavigation by remember { mutableStateOf(HubSettings.quickKeyboardNavigation.value) }
@@ -187,6 +430,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var showHubNotificationImages by remember { mutableStateOf(HubSettings.showNotificationImages.value) }
     var tintHubNotificationImages by remember { mutableStateOf(HubSettings.tintNotificationImages.value) }
     var hubNotificationImagesOnRight by remember { mutableStateOf(HubSettings.notificationImagesOnRight.value) }
+    var hubHistoryRetention by remember { mutableStateOf(HubSettings.historyRetention.value) }
     var geminiKey by remember { mutableStateOf(GeminiSettings.apiKey(activity)) }
     var directSms by remember { mutableStateOf(SmsSettings.directEnabled(activity)) }
     val contactsGranted = ActivityCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
@@ -204,6 +448,19 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var appTermValues by remember { mutableStateOf(AppSearchTerms.aliases(activity).mapValues { it.value.joinToString(", ") }) }
     var iconRevision by remember { mutableStateOf(0) }
     val accent = AccentSettings.color.value
+    val settingsScroll = rememberScrollState()
+    val setupAnchor = remember { BringIntoViewRequester() }
+    val backupAnchor = remember { BringIntoViewRequester() }
+    val aiAnchor = remember { BringIntoViewRequester() }
+    val messagesAnchor = remember { BringIntoViewRequester() }
+    val hubAnchor = remember { BringIntoViewRequester() }
+    val tasksAnchor = remember { BringIntoViewRequester() }
+    val appearanceAnchor = remember { BringIntoViewRequester() }
+    val filesAnchor = remember { BringIntoViewRequester() }
+    val shortcutsAnchor = remember { BringIntoViewRequester() }
+    val aliasesAnchor = remember { BringIntoViewRequester() }
+    val appsAnchor = remember { BringIntoViewRequester() }
+    val anchors = SettingsAnchors(setupAnchor, backupAnchor, aiAnchor, messagesAnchor, hubAnchor, tasksAnchor, appearanceAnchor, filesAnchor, shortcutsAnchor, aliasesAnchor, appsAnchor)
     fun chooseAccent(hex: String) {
         accentHex = hex
         colorValid = true
@@ -217,20 +474,16 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         chooseAccent(String.format("#%06X", 0xFFFFFF and rgb))
     }
     Column(
-        Modifier.fillMaxSize().background(Color(0xFF050505)).verticalScroll(rememberScrollState())
+        Modifier.fillMaxSize().background(Color(0xFF050505)).verticalScroll(settingsScroll)
             .padding(horizontal = 22.dp, vertical = 52.dp),
     ) {
-        Text("commander settings", color = Color(0xFFF4F1E9), fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            Text("open home →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
-                activity.startActivity(Intent(activity, MainActivity::class.java))
-            })
-            Text("open hub →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
-                activity.startActivity(Intent(activity, HubActivity::class.java))
-            })
-        }
+        SettingsNavigation(activity, accent, anchors)
         Spacer(Modifier.height(10.dp))
-        Text("backup & restore", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("setup", Icons.Outlined.SettingsSuggest, accent, Modifier.bringIntoViewRequester(setupAnchor))
+        Spacer(Modifier.height(8.dp))
+        CommanderSetup(activity, accent)
+        Spacer(Modifier.height(24.dp))
+        SettingsSectionHeader("backup & restore", Icons.Outlined.Backup, accent, Modifier.bringIntoViewRequester(backupAnchor))
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
@@ -246,7 +499,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         }
         Text("API credentials and temporary Hub state are not included", color = Color(0xFF99958E), fontSize = 11.sp)
         Spacer(Modifier.height(24.dp))
-        Text("ask · gemini", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("ask · gemini", Icons.Outlined.AutoAwesome, accent, Modifier.bringIntoViewRequester(aiAnchor))
         Spacer(Modifier.height(10.dp))
         Text("Gemini API key", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Text("Used for ? conversations inside Command. ?? still opens ChatGPT.", color = Color(0xFF99958E), fontSize = 12.sp)
@@ -261,7 +514,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         )
         Text("Stored encrypted on this device · model: ${GeminiSettings.MODEL_LABEL}", color = Color(0xFF99958E), fontSize = 11.sp)
         Spacer(Modifier.height(26.dp))
-        Text("messages", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("messages", Icons.Outlined.ChatBubbleOutline, accent, Modifier.bringIntoViewRequester(messagesAnchor))
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -310,8 +563,26 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Text("Photos are cached only when Messenger notifications arrive", color = Color(0xFF99958E), fontSize = 11.sp)
+        Spacer(Modifier.height(16.dp))
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).background(Color(0xFF111111))
+                .clickable { activity.startActivity(Intent(activity, MessagingContactsActivity::class.java)) }
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Messaging people", color = Color(0xFFF4F1E9), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Assign app conversations to people and manage each destination", color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            Text("→", color = accent, fontSize = 19.sp)
+        }
         Spacer(Modifier.height(26.dp))
-        Text("hub & command bar", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("hub & command bar", Icons.Outlined.Dashboard, accent, Modifier.bringIntoViewRequester(hubAnchor))
+        Spacer(Modifier.height(12.dp))
+        HubHistorySettings(activity, accent, hubHistoryRetention) { next ->
+            hubHistoryRetention = next
+            HubSettings.saveHistoryRetention(activity, next)
+        }
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -429,6 +700,177 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         }
         Text("Hidden summaries remain in Android's notification shade.", color = Color(0xFF99958E), fontSize = 11.sp)
         Spacer(Modifier.height(24.dp))
+        Text("Hardware shortcuts", color = Color(0xFFF4F1E9), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Launch Commander directly from physical keys without Key Mapper. Disable any matching Key Mapper action after assigning it here.",
+            color = Color(0xFF99958E),
+            fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Enable hardware shortcuts", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Uses Commander's existing accessibility service", color = Color(0xFF99958E), fontSize = 12.sp)
+            }
+            Switch(
+                checked = hardwareShortcutsEnabled,
+                onCheckedChange = { enabled ->
+                    hardwareShortcutsEnabled = enabled
+                    HardwareShortcutSettings.saveEnabled(activity, enabled)
+                    if (enabled) activity.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        HardwareShortcutAction.entries.filterNot { it.isSwitcherNested() }.forEach { action ->
+            @Suppress("UNUSED_VARIABLE") val revision = hardwareShortcutRevision
+            val binding = HardwareShortcutSettings.binding(activity, action)
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        HardwareShortcutCapture.begin(action)
+                    }
+                    .padding(horizontal = 12.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(action.label, color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (capturingHardwareShortcut == action) "Press the shortcut key now…"
+                        else binding?.displayName() ?: "Not assigned · tap to assign",
+                        color = if (capturingHardwareShortcut == action) accent else Color(0xFF99958E),
+                        fontSize = 12.sp,
+                    )
+                }
+                if (binding != null) {
+                    Text(
+                        "clear",
+                        color = accent,
+                        fontSize = 12.sp,
+                        modifier = Modifier.clickable {
+                            HardwareShortcutSettings.saveBinding(activity, action, null)
+                            HardwareShortcutCapture.bindingChanged()
+                            if (capturingHardwareShortcut == action) HardwareShortcutCapture.cancel()
+                        }.padding(8.dp),
+                    )
+                }
+            }
+            if (action == HardwareShortcutAction.Switcher) {
+                val supportsHold = binding?.secondKeyCode != android.view.KeyEvent.KEYCODE_UNKNOWN
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 28.dp, end = 4.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Hold-to-switch mode", color = if (supportsHold) Color(0xFFF4F1E9) else Color(0xFF77736D), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("Hold the first key, tap the second to cycle, then release the first to open", color = Color(0xFF99958E), fontSize = 11.sp)
+                    }
+                    Switch(
+                        checked = holdSwitcherMode && supportsHold,
+                        enabled = supportsHold,
+                        onCheckedChange = {
+                            holdSwitcherMode = it
+                            HardwareShortcutSettings.saveHoldSwitcher(activity, it)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+                    )
+                }
+                if (holdSwitcherMode && supportsHold) {
+                    listOf(HardwareShortcutAction.SwitcherReverse, HardwareShortcutAction.SwitcherDismiss).forEach { auxiliary ->
+                        val auxiliaryBinding = HardwareShortcutSettings.binding(activity, auxiliary)
+                        Row(
+                            Modifier.fillMaxWidth().padding(start = 28.dp, end = 4.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(
+                                Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable { HardwareShortcutCapture.begin(auxiliary) }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                            ) {
+                                Text(auxiliary.label, color = Color(0xFFF4F1E9), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (capturingHardwareShortcut == auxiliary) "Hold the same first key, then press the new key…"
+                                    else auxiliaryBinding?.displayName() ?: "Not assigned · tap to assign",
+                                    color = if (capturingHardwareShortcut == auxiliary) accent else Color(0xFF99958E),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            if (auxiliaryBinding != null) Text(
+                                "clear", color = accent, fontSize = 12.sp,
+                                modifier = Modifier.clickable {
+                                    HardwareShortcutSettings.saveBinding(activity, auxiliary, null)
+                                    HardwareShortcutCapture.bindingChanged()
+                                }.padding(8.dp),
+                            )
+                        }
+                    }
+                }
+                val browseAction = HardwareShortcutAction.SwitcherBrowse
+                val browseBinding = HardwareShortcutSettings.binding(activity, browseAction)
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 28.dp, end = 4.dp, top = 4.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(
+                        Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable { HardwareShortcutCapture.begin(browseAction) }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Text(browseAction.label, color = Color(0xFFF4F1E9), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (capturingHardwareShortcut == browseAction) "Press the shortcut key now…"
+                            else browseBinding?.displayName() ?: "Opens Switcher for navigation and filtering · tap to assign",
+                            color = if (capturingHardwareShortcut == browseAction) accent else Color(0xFF99958E),
+                            fontSize = 11.sp,
+                        )
+                    }
+                    if (browseBinding != null) Text(
+                        "clear", color = accent, fontSize = 12.sp,
+                        modifier = Modifier.clickable {
+                            HardwareShortcutSettings.saveBinding(activity, browseAction, null)
+                            HardwareShortcutCapture.bindingChanged()
+                        }.padding(8.dp),
+                    )
+                }
+            }
+            if (action == HardwareShortcutAction.KeyControl) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 28.dp, end = 4.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Close after activation", color = Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("Turn on for one action at a time", color = Color(0xFF99958E), fontSize = 11.sp)
+                    }
+                    Switch(
+                        checked = closeKeyControlAfterActivation,
+                        onCheckedChange = {
+                            closeKeyControlAfterActivation = it
+                            KeyControlSettings.saveCloseAfterActivation(activity, it)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+                    )
+                }
+            }
+        }
+        Text("Only the first key-down is handled. Holding a key cannot repeat the shortcut.", color = Color(0xFF99958E), fontSize = 11.sp)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Allow shortcuts while typing", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Enable Commander shortcuts in text fields and while the on-screen keyboard is visible", color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            Switch(
+                checked = allowHardwareWhileTyping,
+                onCheckedChange = {
+                    allowHardwareWhileTyping = it
+                    HardwareShortcutSettings.saveAllowWhileTyping(activity, it)
+                },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text("Type from home screen", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -461,30 +903,33 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )
         }
-        Text(
-            "Open Command app info  →",
-            color = accent,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .clickable {
-                    activity.startActivity(
-                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.fromParts("package", activity.packageName, null)
-                        },
-                    )
-                }
-                .padding(top = 8.dp, bottom = 4.dp),
-        )
-        Text(
-            "Open Accessibility settings  →",
-            color = accent,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .clickable { activity.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                .padding(top = 4.dp, bottom = 8.dp),
-        )
+        Spacer(Modifier.height(14.dp))
+        Text("App search categories", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text("Optionally mix their matching actions into normal app results", color = Color(0xFF99958E), fontSize = 12.sp)
+        Spacer(Modifier.height(8.dp))
+        listOf(
+            Triple("App Shortcuts", appShortcutCategory) { value: Boolean ->
+                appShortcutCategory = value
+                AppSearchSettings.saveAppShortcutCategory(activity, value)
+            },
+            Triple("Quick Controls", quickControlsCategory) { value: Boolean ->
+                quickControlsCategory = value
+                AppSearchSettings.saveQuickControlsCategory(activity, value)
+            },
+        ).forEach { (label, checked, save) ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(label, color = Color(0xFFF4F1E9), fontSize = 14.sp, modifier = Modifier.weight(1f))
+                Switch(
+                    checked = checked,
+                    onCheckedChange = save,
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+                )
+            }
+        }
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -516,7 +961,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Spacer(Modifier.height(26.dp))
-        Text("todoist", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("todoist", Icons.Outlined.CheckCircleOutline, accent, Modifier.bringIntoViewRequester(tasksAnchor))
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -547,7 +992,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         Spacer(Modifier.height(9.dp))
         Text("Todoist → Settings → Integrations → Developer", color = Color(0xFF99958E), fontSize = 12.sp)
         Spacer(Modifier.height(28.dp))
-        Text("appearance", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("appearance", Icons.Outlined.Palette, accent, Modifier.bringIntoViewRequester(appearanceAnchor))
         Spacer(Modifier.height(12.dp))
         Text("Accent colour", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
@@ -605,16 +1050,85 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             Slider(value = pickerBrightness, onValueChange = { pickerBrightness = it; updatePickerHex() }, valueRange = .12f..1f)
         }
         Spacer(Modifier.height(24.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text("Invert blur darkness", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Darker blurred panel and lighter command bar, like the Minimal UI", color = Color(0xFF99958E), fontSize = 12.sp)
-            }
+        Text("Blur appearance", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text("Choose the screen darkness and glass treatment", color = Color(0xFF99958E), fontSize = 12.sp)
+        Spacer(Modifier.height(9.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Use one style for light and dark mode", color = Color(0xFFF4F1E9), fontSize = 14.sp, modifier = Modifier.weight(1f))
             Switch(
-                checked = invertBlurDarkness,
-                onCheckedChange = { invertBlurDarkness = it; saved = false },
+                checked = singleBlurStyle,
+                onCheckedChange = { singleBlurStyle = it; saved = false },
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )
+        }
+        @Composable fun blurChoices(label: String, selectedStyle: BlurStyle, onSelect: (BlurStyle) -> Unit) {
+            if (label.isNotBlank()) Text(label, color = Color(0xFF99958E), fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp, bottom = 5.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                BlurStyle.entries.forEach { style ->
+                    val selected = selectedStyle == style
+                    Text(
+                        style.name.lowercase(), color = if (selected) Color.White else Color(0xFFAAA7A0), fontSize = 12.sp,
+                        modifier = Modifier.weight(1f).background(
+                            if (selected) accent else Color(0xFF111111), RoundedCornerShape(10.dp),
+                        ).clickable { onSelect(style); saved = false }.padding(vertical = 11.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
+            }
+        }
+        if (singleBlurStyle) blurChoices("", blurStyle) { blurStyle = it }
+        else {
+            blurChoices("Dark mode", darkBlurStyle) { darkBlurStyle = it }
+            blurChoices("Light mode", lightBlurStyle) { lightBlurStyle = it }
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Time-based appearance", color = Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Use Commander styles on your own day and night schedule", color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            Switch(
+                checked = timeTheme,
+                onCheckedChange = { timeTheme = it; saved = false },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        if (timeTheme) {
+            @Composable fun timeEntry(label: String, value: String, onValue: (String) -> Unit) {
+                Row(Modifier.fillMaxWidth().padding(top = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, color = Color(0xFFAAA7A0), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    BasicTextField(
+                        value = value,
+                        onValueChange = { input -> onValue(input.filter { it.isDigit() || it == ':' }.take(5)); saved = false },
+                        singleLine = true,
+                        textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
+                        modifier = Modifier.background(Color(0xFF111111), RoundedCornerShape(9.dp)).padding(horizontal = 12.dp, vertical = 9.dp),
+                    )
+                }
+            }
+            timeEntry("Day begins", dayStart) { dayStart = it }
+            blurChoices("Day style", dayStyle) { dayStyle = it }
+            timeEntry("Night begins", nightStart) { nightStart = it }
+            blurChoices("Night style", nightStyle) { nightStyle = it }
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Darker background", color = Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Adds contrast on devices where background blur is unavailable", color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            Switch(
+                checked = darkerBackground,
+                onCheckedChange = { darkerBackground = it; saved = false },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        if (darkerBackground) {
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Background darkness", color = Color(0xFFAAA7A0), fontSize = 12.sp)
+                Text("${(backgroundDarkness * 100).toInt()}%", color = accent, fontSize = 12.sp)
+            }
+            Slider(value = backgroundDarkness, onValueChange = { backgroundDarkness = it; saved = false }, valueRange = 0f..0.65f)
         }
         Spacer(Modifier.height(28.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -703,7 +1217,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             }
         }
         Spacer(Modifier.height(28.dp))
-        Text("files & folders", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("files & folders", Icons.Outlined.FolderOpen, accent, Modifier.bringIntoViewRequester(filesAnchor))
         Spacer(Modifier.height(10.dp))
         Text("File-search trigger", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Text("Type one character, or use ‘space’. Default: space", color = Color(0xFF99958E), fontSize = 12.sp)
@@ -761,7 +1275,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             }
         }
         Spacer(Modifier.height(28.dp))
-        Text("shortcuts & automations", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("shortcuts & automations", Icons.Outlined.Keyboard, accent, Modifier.bringIntoViewRequester(shortcutsAnchor))
         Spacer(Modifier.height(10.dp))
         Text("App shortcut search alias", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Text("Search shortcuts declared by installed apps. Default: !as", color = Color(0xFF99958E), fontSize = 12.sp)
@@ -846,7 +1360,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Spacer(Modifier.height(20.dp))
-        Text("search aliases", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("search aliases", Icons.Outlined.Search, accent, Modifier.bringIntoViewRequester(aliasesAnchor))
         Spacer(Modifier.height(7.dp))
         Text("Use commas for multiple aliases. Example: .ps, .play. Leave blank to disable.", color = Color(0xFF99958E), fontSize = 12.sp)
         Spacer(Modifier.height(13.dp))
@@ -864,7 +1378,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             }
         }
         Spacer(Modifier.height(28.dp))
-        Text("app search terms", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        SettingsSectionHeader("app search terms", Icons.Outlined.Apps, accent, Modifier.bringIntoViewRequester(appsAnchor))
         Spacer(Modifier.height(7.dp))
         Text("Find an app, then add optional comma-separated terms such as ps, store.", color = Color(0xFF99958E), fontSize = 12.sp)
         Spacer(Modifier.height(12.dp))
@@ -934,7 +1448,9 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             if (colorValid) recentAccentColors = AccentSettings.recent(activity)
             TriggerSettings.save(activity, swapDotBang)
             FileSearchSettings.save(activity, fileSearchTrigger, showFolders, filesOnlyPrefix, foldersOnlyPrefix)
-            AppearanceSettings.saveInvertBlurDarkness(activity, invertBlurDarkness)
+            AppearanceSettings.saveBlurStyles(activity, singleBlurStyle, blurStyle, darkBlurStyle, lightBlurStyle)
+            AppearanceSettings.saveTimeTheme(activity, timeTheme, dayStart, nightStart, dayStyle, nightStyle)
+            AppearanceSettings.saveBackgroundDarkness(activity, darkerBackground, backgroundDarkness)
             AppearanceSettings.savePulseConfirmation(activity, pulseConfirmation)
             AppearanceSettings.saveAppGlowMode(activity, appGlowMode)
             AppearanceSettings.saveListAnimation(activity, listAnimation)

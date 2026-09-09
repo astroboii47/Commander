@@ -1,7 +1,42 @@
 package com.astroboii47.commander
 
 object TaskSwitcherShell {
-    fun load(context: android.content.Context): List<SwitcherTask> {
+    data class SplitTarget(val taskId: Int, val packageName: String)
+    private const val CACHE_MS = 3_000L
+    @Volatile private var cachedAt = 0L
+    @Volatile private var cached = emptyList<SwitcherTask>()
+
+    fun load(context: android.content.Context, client: TaskSwitcherClient? = null, forceRefresh: Boolean = false): List<SwitcherTask> {
+        val now = android.os.SystemClock.elapsedRealtime()
+        cached.takeIf { !forceRefresh && it.isNotEmpty() && now - cachedAt <= CACHE_MS }?.let { return it }
+        val direct = client?.recentTasks(32).orEmpty()
+        val loaded = if (direct.isNotEmpty()) direct else loadFromShell(context)
+        if (loaded.isNotEmpty()) {
+            cached = loaded
+            cachedAt = now
+        }
+        return loaded
+    }
+
+    fun underlyingSplitTarget(context: android.content.Context): Result<SplitTarget> = runCatching {
+        val output = ShizukuBridge.capture(arrayOf("dumpsys", "activity", "recents")).getOrThrow()
+        val blocks = output.split(Regex("(?=\\* Recent #\\d+:)"))
+        val commanderIndex = blocks.indexOfFirst { "mActivityComponent=${context.packageName}/" in it }
+        val target = if (commanderIndex >= 0) {
+            blocks.drop(commanderIndex + 1).firstOrNull { "type=standard" in it }
+        } else {
+            blocks.firstOrNull { block ->
+                "type=standard" in block && "mActivityComponent=${context.packageName}/" !in block
+            }
+        } ?: error("No app is available to split")
+        val taskId = Regex("""taskId=(\d+)""").find(target)?.groupValues?.get(1)?.toIntOrNull()
+            ?: error("Could not identify the active app")
+        val component = Regex("""mActivityComponent=([^\s}]+)""").find(target)?.groupValues?.get(1)
+            ?: error("Could not identify the active app")
+        SplitTarget(taskId, component.substringBefore('/'))
+    }
+
+    private fun loadFromShell(context: android.content.Context): List<SwitcherTask> {
         val output = ShizukuBridge.capture(arrayOf("dumpsys", "activity", "recents")).getOrNull() ?: return emptyList()
         val pm = context.packageManager
         val blocks = output.split(Regex("(?=\\* Recent #\\d+:)"))

@@ -22,7 +22,10 @@
 Commander puts common Android actions behind one searchable overlay. Open the bar from a hardware key, launcher gesture, shortcut, or optional home-screen typing, then type what you want to do.
 
 - Search installed apps and launcher shortcuts.
+- Switch between recent apps with previews, filtering, keyboard navigation, and optional hold-to-switch shortcuts.
+- Control accessible on-screen actions with compact keyboard hints and control search.
 - Add Todoist tasks with natural-language date and time recognition.
+- Browse Todoist Tasks, Upcoming, and Calendar views from the command bar.
 - Search files and folders, with optional previews and sorting.
 - Start timers, calculate expressions, and convert common units.
 - Search contacts for calls and messages.
@@ -32,6 +35,9 @@ Commander puts common Android actions behind one searchable overlay. Open the ba
 - Run selected Tasker tasks.
 - Ask Gemini in the overlay or continue a query in ChatGPT.
 - Read, filter, dismiss, open, and reply to supported notifications in Commander Hub.
+- Retain optional encrypted notification history for a user-selected period.
+- Organise SMS contacts and supported app conversations through Commander Contacts.
+- Trigger supported audio, display, media, battery, and device Quick Controls.
 - Customise accent colour, blur, glow, app-result animation, and interface sounds.
 
 Commander is designed for speed and physical-keyboard devices first. It also works on conventional Android phones and can be operated by touch, but its shortest workflows are built around typing and keyboard navigation.
@@ -109,6 +115,8 @@ Other apps may work when they expose compatible Android intents, shortcuts, or n
 4. Configure only the permissions and integrations you intend to use.
 5. Add **Commander Bar** to a hardware key, launcher gesture, or automation app.
 
+Commander requires Android 10 or newer.
+
 Android may block Accessibility for manually installed apps until **Allow restricted settings** is enabled from Commander’s Android app-info page. Commander Settings provides direct links to both app info and Accessibility.
 
 See the [complete setup guide](docs/SETUP.md) for notification access, home typing, files, contacts, Todoist, Gemini, Tasker, and keyboard shortcuts.
@@ -135,6 +143,8 @@ The note and file triggers are configurable. Search aliases can also be assigned
 ## Commander Hub
 
 Commander Hub uses Android’s notification-listener interface to collect active notifications into one keyboard-friendly view. It supports configurable category tabs, unread highlighting, dismissing notifications, opening their original destination, and inline replies when the originating app exposes an Android direct-reply action. Optional tabs can be shown automatically, kept visible, or hidden.
+
+Notification history is off by default. When enabled, Commander retains encrypted text snapshots for the selected period. Images and live notification actions are not retained.
 
 Reply support is determined by the notification. Some apps or notification types do not provide a reply action, and grouped notifications may expose only a summary.
 

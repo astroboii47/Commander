@@ -21,6 +21,8 @@ data class AppResult(
     val packageName: String,
     val icon: Drawable?,
     val adaptiveColor: Int? = null,
+    val control: ControlResult? = null,
+    val shortcut: AppShortcutResult? = null,
 )
 
 data class ContactResult(
@@ -29,6 +31,20 @@ data class ContactResult(
     val label: String,
     val messengerShortcutId: String? = null,
     val avatar: android.graphics.Bitmap? = null,
+    val hubNotificationKey: String? = null,
+    val commanderMessagingContactId: String? = null,
+    val messagingIdentity: String? = null,
+    val messagingPlatform: String? = null,
+    val messagingPackageName: String? = null,
+    val messagingPlatformScope: String? = null,
+    val messagingPlatformIcon: android.graphics.Bitmap? = null,
+    val messagingIsDefault: Boolean = false,
+)
+
+data class CommanderMessageDelivery(
+    val error: String? = null,
+    val sent: Boolean = false,
+    val status: String,
 )
 
 data class FileResult(

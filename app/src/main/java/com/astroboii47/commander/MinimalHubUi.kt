@@ -69,6 +69,7 @@ import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -554,6 +555,19 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                             fontSize = 12.sp,
                             lineHeight = 12.sp,
                             style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                        )
+                    }
+                    Box(
+                        Modifier.size(32.dp).clip(CircleShape).clickable {
+                            context.startActivity(Intent(context, HubHistoryActivity::class.java))
+                        }.padding(7.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.History,
+                            contentDescription = "Open notification history",
+                            tint = palette.secondary,
+                            modifier = Modifier.size(18.dp).offset(y = 1.dp),
                         )
                     }
                     Box(

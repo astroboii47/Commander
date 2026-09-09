@@ -373,7 +373,7 @@ private fun CommandPreview(command: ParsedCommand, palette: Palette, onExecute: 
         CommandKind.Todo -> "add with Todoist"
         CommandKind.Note -> "keep in notes inbox"
         CommandKind.Event -> "create calendar event"
-        CommandKind.Timer -> "set timer"
+        CommandKind.Timer -> "set timer or alarm"
         CommandKind.Calculator -> "calculate"
         CommandKind.Web -> "search in browser"
         CommandKind.Ask -> "ask ChatGPT"

@@ -21,6 +21,8 @@ object SettingsBackup {
         "command_aliases",
         "tasker_aliases",
         "home_typing",
+        "hardware_shortcuts",
+        "key_control_settings",
         "hub_settings",
         "sms_settings",
         "messenger_settings",
@@ -120,6 +122,8 @@ object SettingsBackup {
         SoundSettings.initialize(context)
         SoundFeedback.initialize(context)
         HomeTypingSettings.initialize(context)
+        HardwareShortcutSettings.initialize(context)
+        KeyControlSettings.initialize(context)
         HubSettings.initialize(context)
         AppCatalog.initialize(context)
         AppShortcutCatalog.clear()

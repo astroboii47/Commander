@@ -17,6 +17,21 @@ enum class HubTabVisibility(val storedValue: String, val label: String) {
     }
 }
 
+enum class HubHistoryRetention(val storedValue: String, val label: String, val durationMillis: Long?) {
+    Off("off", "off", 0L),
+    OneDay("1_day", "24 hours", 24L * 60 * 60 * 1000),
+    OneWeek("1_week", "7 days", 7L * 24 * 60 * 60 * 1000),
+    OneMonth("1_month", "30 days", 30L * 24 * 60 * 60 * 1000),
+    ThreeMonths("3_months", "3 months", 90L * 24 * 60 * 60 * 1000),
+    Indefinite("indefinite", "indefinitely", null);
+
+    fun next(): HubHistoryRetention = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        fun fromStored(value: String?): HubHistoryRetention = entries.firstOrNull { it.storedValue == value } ?: Off
+    }
+}
+
 object HubSettings {
     private const val PREFS = "hub_settings"
     private const val KEY_SHOW_SUMMARIES = "show_summaries"
@@ -25,6 +40,7 @@ object HubSettings {
     private const val KEY_SHOW_NOTIFICATION_IMAGES = "show_notification_images"
     private const val KEY_TINT_NOTIFICATION_IMAGES = "tint_notification_images"
     private const val KEY_NOTIFICATION_IMAGES_ON_RIGHT = "notification_images_on_right"
+    private const val KEY_HISTORY_RETENTION = "history_retention"
     private const val TAB_PREFIX = "tab_visibility_"
     val optionalTabs = listOf("messages", "calls", "email", "finance", "tasks", "apps", "flagged", "summaries")
     val tabVisibility = mutableStateOf<Map<String, HubTabVisibility>>(emptyMap())
@@ -33,6 +49,7 @@ object HubSettings {
     val showNotificationImages = mutableStateOf(false)
     val tintNotificationImages = mutableStateOf(false)
     val notificationImagesOnRight = mutableStateOf(false)
+    val historyRetention = mutableStateOf(HubHistoryRetention.Off)
 
     fun initialize(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -48,6 +65,7 @@ object HubSettings {
         showNotificationImages.value = prefs.getBoolean(KEY_SHOW_NOTIFICATION_IMAGES, false)
         tintNotificationImages.value = prefs.getBoolean(KEY_TINT_NOTIFICATION_IMAGES, false)
         notificationImagesOnRight.value = prefs.getBoolean(KEY_NOTIFICATION_IMAGES_ON_RIGHT, false)
+        historyRetention.value = HubHistoryRetention.fromStored(prefs.getString(KEY_HISTORY_RETENTION, null))
     }
 
     fun visibility(tab: String): HubTabVisibility = tabVisibility.value[tab] ?: HubTabVisibility.Auto
@@ -86,6 +104,13 @@ object HubSettings {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_NOTIFICATION_IMAGES_ON_RIGHT, enabled).apply()
         notificationImagesOnRight.value = enabled
+    }
+
+    fun saveHistoryRetention(context: Context, retention: HubHistoryRetention) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_HISTORY_RETENTION, retention.storedValue).apply()
+        historyRetention.value = retention
+        HubHistoryStore.prune(context)
     }
 }
 

@@ -18,7 +18,10 @@ class MinimalCommandApplication : Application() {
         SoundSettings.initialize(this)
         SoundFeedback.initialize(this)
         HomeTypingSettings.initialize(this)
+        HardwareShortcutSettings.initialize(this)
+        KeyControlSettings.initialize(this)
         HubSettings.initialize(this)
+        HubHistoryStore.initialize(this)
         HubIgnoreSettings.initialize(this)
         AppCatalog.initialize(this)
         publishDynamicShortcuts()
@@ -59,6 +62,16 @@ class MinimalCommandApplication : Application() {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
             .build()
+        val keyControl = ShortcutInfo.Builder(this, KEY_CONTROL_SHORTCUT_ID)
+            .setShortLabel("Key Control")
+            .setLongLabel("Control the screen with keys")
+            .setIcon(Icon.createWithResource(this, R.drawable.ic_commander_bar))
+            .setIntent(
+                Intent("com.astroboii47.commander.OPEN_KEY_CONTROL")
+                    .setClass(this, KeyControlActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            .build()
         val home = ShortcutInfo.Builder(this, HOME_SHORTCUT_ID)
             .setShortLabel("Commander Home")
             .setLongLabel("Open Commander Home")
@@ -67,7 +80,7 @@ class MinimalCommandApplication : Application() {
             .build()
         runCatching {
             manager.removeAllDynamicShortcuts()
-            val shortcuts = mutableListOf(commandBar, hub, switcher, settings)
+            val shortcuts = mutableListOf(commandBar, hub, switcher, keyControl, settings)
             if (resources.getBoolean(R.bool.commander_home_launcher_enabled)) shortcuts.add(home)
             manager.addDynamicShortcuts(shortcuts)
         }
@@ -78,6 +91,7 @@ class MinimalCommandApplication : Application() {
         const val HUB_SHORTCUT_ID = "minimal_hub_dynamic"
         const val SETTINGS_SHORTCUT_ID = "command_settings_dynamic"
         const val SWITCHER_SHORTCUT_ID = "app_switcher_dynamic"
+        const val KEY_CONTROL_SHORTCUT_ID = "key_control_dynamic"
         const val HOME_SHORTCUT_ID = "command_home_dynamic"
     }
 }

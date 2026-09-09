@@ -50,10 +50,24 @@ Open Commander Hub and grant Notification access when prompted. Hub displays act
 - Swipe or use the configured keyboard action to dismiss it.
 - Reply is available only when the notification exposes a direct-reply action.
 - Aggregate notification summaries are hidden by default and can be enabled in Settings.
+- Press the History icon beside **Manage** to open retained notification history.
 
-## 5. Contacts and messaging
+Notification history is off by default. In **Commander Settings > Hub & command bar**, tap **Keep notification history** to choose 24 hours, 7 days, 30 days, 3 months, or indefinite retention. Stored history is encrypted, excludes notification images and live actions, and can be cleared from the History screen.
+
+## 5. Commander Contacts and messaging
 
 Grant Contacts permission to search names after `@` or `#`. SMS sending requires the SMS permission and confirmation flow provided by Commander. Messenger and other third-party messaging behaviour depends on the shortcuts or active reply notifications exposed by the installed app.
+
+Open **Commander Contacts** from the top of Commander Settings to organise messaging destinations:
+
+1. Allow a supported messaging notification to arrive so Commander can discover its app identity.
+2. Open the **Unassigned** page and create a Commander person or assign the identity to an existing person.
+3. Add an SMS contact or additional app identities to that person as needed.
+4. Select **Make default** beside the route that should appear first and be preferred when no route is explicitly selected.
+
+Type `@` followed by a person's Commander name to see their assigned routes. Type an app scope such as `@Messenger ` or `@WhatsApp ` to search only that app's known conversations. The whole selected app scope is shown in the accent colour. Type `@recents` to see recent replyable notification conversations and their available context.
+
+Some messaging apps require a live reply-capable notification. Others may open an app-provided recipient screen for final confirmation. Always verify the displayed person and app before sending.
 
 ## 6. Files and folders
 
@@ -77,6 +91,8 @@ For direct add:
 
 The token is encrypted with Android Keystore. Natural-language recognition is an indicator before submission; Todoist remains responsible for final parsing.
 
+Search for **Tasks** or type `tasks ` to open the task interface. Use Left and Right to switch between Tasks, Upcoming, and Calendar. Up and Down select tasks, Enter completes the selection, and Shift+Enter opens it in Todoist. The list refreshes when opened so changes made in Todoist or on another device can appear.
+
 ## 8. Gemini and ChatGPT
 
 - `?` uses the Gemini API inside Commander and requires your own Google AI Studio key.
@@ -88,7 +104,25 @@ The Gemini key is encrypted with Android Keystore. Queries sent to Gemini are go
 
 Settings can assign one or more aliases to supported search targets. Enter the alias, a space, then the query. Tasker aliases use Tasker’s task-selection and execution interfaces and require Tasker to be installed and configured.
 
-## 10. Keyboard navigation
+## 10. Quick Controls
+
+Search for **Quick Controls** in Commander Bar or use its configured alias. Type to filter controls, then press Enter to activate the selected item. Controls that need a value prepare the bar for input. Examples include a brightness percentage or `auto`, a volume percentage, and a ringer mode.
+
+Settings can also mix matching Quick Controls into normal app search. Support varies by Android version and device firmware. Privileged and manufacturer-specific controls may require Shizuku or may remain unavailable on another device.
+
+## 11. App Switcher
+
+Open **App Switcher** from Commander search, its Android shortcut, or a configured Commander hardware shortcut. Left and Right move between recent apps, Enter opens the selected card, typing filters by app name, and swiping a card upward closes that task where Android permits it.
+
+Hold-to-switch mode works like an Alt-Tab shortcut: hold the chosen modifier, press the forward or reverse key to select an app, then release the modifier to open it. Sticky mode keeps App Switcher open for filtering and normal navigation. Faster task previews and some device controls require Shizuku.
+
+## 12. Key Control
+
+Key Control overlays compact letter hints on accessibility actions exposed by the current screen. Type a visible hint to activate it. Press Shift to search exposed control labels, then use Up and Down to select a match and Enter to activate it. Space and the configured reverse combination scroll supported accessibility containers.
+
+Key Control depends on the target app exposing meaningful accessibility nodes and actions. Web pages, custom canvases, games, and some app screens may expose incomplete or stale information.
+
+## 13. Keyboard navigation
 
 Commander Bar supports arrow-key selection and Enter to activate the selected result. Backspace on an empty field moves back one command stage or closes the overlay.
 

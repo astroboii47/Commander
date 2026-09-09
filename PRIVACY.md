@@ -4,13 +4,15 @@ Commander does not contain advertising, analytics, telemetry, or crash-reporting
 
 ## Data stored on the device
 
-Commander stores preferences, aliases, selected integrations, notification-read state, and optional API credentials in its private app storage. Gemini and Todoist credentials are encrypted using a key held by Android Keystore.
+Commander stores preferences, aliases, selected integrations, notification-read state, saved messaging people and routes, and optional API credentials in its private app storage. Gemini and Todoist credentials are encrypted using a key held by Android Keystore.
+
+Notification history is off by default. If enabled, Commander stores a limited snapshot containing the notification title, text, app, category, and time for the selected retention period. History is encrypted with a key held by Android Keystore. Notification images, reply handles, and notification action handles are not retained. History can be cleared from its screen or disabled from Settings.
 
 Uninstalling Commander removes its private app data. Android backup behaviour can depend on device settings and firmware.
 
 ## Data accessed by optional features
 
-- **Notification access:** reads active notifications so Commander Hub can display, dismiss, open, categorise, and reply to them. Notification content is processed on the device.
+- **Notification access:** reads active notifications so Commander Hub can display, dismiss, open, categorise, and reply to them. It also discovers replyable messaging routes and can retain notification history when the user enables that option. This information remains in private app storage.
 - **Accessibility:** receives physical key events for optional launcher home-screen typing and performs narrowly scoped automation for supported handoff features.
 - **Contacts:** searches local contacts for calling and messaging commands.
 - **SMS:** sends an SMS only after the user invokes the corresponding messaging workflow.

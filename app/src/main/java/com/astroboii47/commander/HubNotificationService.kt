@@ -10,7 +10,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.graphics.drawable.toBitmap
-import android.util.Log
 import android.os.Build
 import android.graphics.Bitmap
 
@@ -66,6 +65,7 @@ object HubRepository {
     private var dismissNotification: ((String) -> Unit)? = null
     private var snoozeNotification: ((String, Long) -> Unit)? = null
     private var refreshNotifications: (() -> Unit)? = null
+    private var archiveNotification: ((HubItem) -> Unit)? = null
     private data class PendingReply(
         val message: HubMessage,
         val sentAt: Long,
@@ -127,12 +127,17 @@ object HubRepository {
         refreshNotifications = handler
     }
 
+    fun attachArchiveHandler(handler: ((HubItem) -> Unit)?) {
+        archiveNotification = handler
+    }
+
     fun requestRefresh() {
         refreshNotifications?.invoke()
     }
 
     fun dismiss(key: String) {
         val item = items.firstOrNull { it.key == key || key in it.sourceKeys }
+        item?.let { archiveNotification?.invoke(it) }
         val keys = item?.sourceKeys.orEmpty().ifEmpty { setOf(key) }
         items = items.filterNot { it === item || it.key == key }
         keys.forEach {
@@ -169,17 +174,21 @@ object HubRepository {
     fun recordSentReply(key: String, text: String) {
         val now = System.currentTimeMillis()
         val reply = HubMessage(text, null, true, now)
-        sentReplies.getOrPut(key) { mutableListOf() }.add(PendingReply(reply, now))
+        val source = items.firstOrNull { it.key == key || key in it.sourceKeys }
+        val historyKey = source?.replyHistoryKey() ?: key
+        sentReplies.getOrPut(historyKey) { mutableListOf() }.add(PendingReply(reply, now))
         items = items.map { item ->
-            if (item.key == key) item.copy(messages = item.messages + reply) else item
+            if (item.key == key || key in item.sourceKeys) item.copy(messages = item.messages + reply) else item
         }
     }
 
     private fun mergeSentReplies(item: HubItem): HubItem {
-        val pending = sentReplies[item.key] ?: return item
+        val historyKey = item.replyHistoryKey()
+        val pending = sentReplies[historyKey] ?: sentReplies[item.key] ?: return item
         val now = System.currentTimeMillis()
         pending.removeAll { now - it.sentAt > SENT_REPLY_RETENTION_MS }
         if (pending.isEmpty()) {
+            sentReplies.remove(historyKey)
             sentReplies.remove(item.key)
             return item
         }
@@ -198,7 +207,10 @@ object HubRepository {
                 claimed += matchIndex
                 merged[matchIndex] = merged[matchIndex].copy(sender = null, outgoing = true)
                 local.acknowledged = true
-            } else if (!local.acknowledged) {
+            } else {
+                // Some messaging apps acknowledge an outgoing reply once and
+                // omit it again from later notification payloads. Keep the
+                // Commander copy in the conversation for the retention window.
                 merged += local.message
             }
         }
@@ -209,6 +221,7 @@ object HubRepository {
         items = notifications
             .asSequence()
             .filter { !it.isOngoing }
+            .onEach { it.cacheMessagingPlatformIcon(service) }
             .onEach { it.discoverMessengerConversation(service) }
             .mapNotNull { it.toHubItem(service) }
             .filterNot(::consumeActionConfirmation)
@@ -218,6 +231,7 @@ object HubRepository {
             .toList()
             .let(::deduplicateNotifications)
             .sortedByDescending { it.time }
+        items.forEach { CommanderMessagingContacts.discover(service.applicationContext, it) }
     }
 
     fun upsert(notification: StatusBarNotification, service: NotificationListenerService) {
@@ -226,9 +240,11 @@ object HubRepository {
             return
         }
         notification.discoverMessengerConversation(service)
+        notification.cacheMessagingPlatformIcon(service)
         val converted = notification.toHubItem(service)?.takeUnless(::consumeActionConfirmation)
             ?.takeUnless(HubIgnoreSettings::matches)?.let(::mergeSentReplies)
             ?.takeUnless { it.isSummary && it.key in hiddenSummaryKeys }
+        converted?.let { CommanderMessagingContacts.discover(service.applicationContext, it) }
         items = if (converted == null) {
             items.filterNot { it.key == notification.key }
         } else {
@@ -267,18 +283,28 @@ object HubRepository {
                 }
             }
         }
-        sentReplies.remove(key)
+        // Notification reply commonly removes the live notification even
+        // though the conversation continues. Conversation-keyed sent history
+        // must survive that removal so the next notification can merge it.
         hiddenSummaryKeys.remove(key)
         suppressedActionConfirmationKeys.remove(key)
     }
 }
 
-private const val SENT_REPLY_RETENTION_MS = 10 * 60 * 1000L
+private const val SENT_REPLY_RETENTION_MS = 24 * 60 * 60 * 1000L
 private const val SENT_REPLY_MATCH_WINDOW_MS = 2 * 60 * 1000L
 private const val ACTION_CONFIRMATION_WINDOW_MS = 5_000L
 private const val SUPPRESSED_CONFIRMATION_RETENTION_MS = 60_000L
 private const val EXTERNAL_MUTATION_WINDOW_MS = 5_000L
 private fun String.normalizedReplyText(): String = trim().replace(Regex("\\s+"), " ")
+
+private fun HubItem.replyHistoryKey(): String = buildString {
+    append(packageName)
+    append('|')
+    append(shortcutId?.takeIf(String::isNotBlank) ?: channelId?.takeIf(String::isNotBlank) ?: "notification")
+    append('|')
+    append((conversationTitle ?: title).trim().lowercase())
+}
 
 class HubNotificationService : NotificationListenerService() {
     override fun onListenerConnected() {
@@ -287,12 +313,14 @@ class HubNotificationService : NotificationListenerService() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) snoozeNotification(key, durationMillis)
         }
         HubRepository.attachRefreshHandler(::refresh)
+        HubRepository.attachArchiveHandler { HubHistoryStore.archive(applicationContext, it) }
         refresh()
     }
     override fun onListenerDisconnected() {
         HubRepository.attachDismissHandler(null)
         HubRepository.attachSnoozeHandler(null)
         HubRepository.attachRefreshHandler(null)
+        HubRepository.attachArchiveHandler(null)
     }
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
@@ -300,12 +328,24 @@ class HubNotificationService : NotificationListenerService() {
         runCatching { HubRepository.upsert(sbn, this) }
     }
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        sbn?.let { HubRepository.remove(it.key) }
+        sbn?.let {
+            HubRepository.items.firstOrNull { item -> item.key == it.key || it.key in item.sourceKeys }
+                ?.let { item -> HubHistoryStore.archive(applicationContext, item) }
+            HubRepository.remove(it.key)
+        }
     }
 
     private fun refresh() {
         runCatching { HubRepository.replace(activeNotifications ?: emptyArray(), this) }
     }
+}
+
+private fun StatusBarNotification.cacheMessagingPlatformIcon(service: NotificationListenerService) {
+    val messageLike = notification.category == Notification.CATEGORY_MESSAGE ||
+        notification.actions.orEmpty().any { action -> action.remoteInputs?.isNotEmpty() == true }
+    if (!messageLike && !CommanderMessagingContacts.isMessagingPackage(service.applicationContext, packageName)) return
+    val icon = runCatching { notification.smallIcon?.loadDrawable(service)?.toBitmap(72, 72) }.getOrNull()
+    CommanderMessagingContacts.cachePlatformIcon(service.applicationContext, packageName, icon)
 }
 
 private fun StatusBarNotification.discoverMessengerConversation(service: NotificationListenerService) {
@@ -326,7 +366,7 @@ private val appLabelCache = mutableMapOf<String, String>()
 private fun StatusBarNotification.toHubItem(service: NotificationListenerService): HubItem? {
     val extras = notification.extras
     val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-    val conversationTitle = (
+    val suppliedConversationTitle = (
         extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()
             ?: extras.getCharSequence("android.hiddenConversationTitle")?.toString()
         )?.replace(Regex("\\s*\\(\\d+\\s+messages?\\)\\s*$", RegexOption.IGNORE_CASE), "")
@@ -353,10 +393,10 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
             .mapNotNull { message ->
                 val rawBody = message.text?.toString()?.takeIf(String::isNotBlank) ?: return@mapNotNull null
                 val rawSender = message.senderPerson?.name?.toString()?.trim()?.takeIf(String::isNotBlank)
-                val prefixed = if (conversationTitle != null) GROUP_SENDER_PREFIX.find(rawBody) else null
+                val prefixed = if (suppliedConversationTitle != null) GROUP_SENDER_PREFIX.find(rawBody) else null
                 val embeddedSender = prefixed?.groupValues?.getOrNull(1)?.cleanHubSender()
                 val senderIsPlaceholder = rawSender == null || rawSender.equals("Mentioned all", true) ||
-                    rawSender.equals("All", true) || rawSender.equals(conversationTitle, true)
+                    rawSender.equals("All", true) || rawSender.equals(suppliedConversationTitle, true)
                 val sender = (if (senderIsPlaceholder) embeddedSender ?: rawSender else rawSender)?.cleanHubSender()
                 val body = if (senderIsPlaceholder && embeddedSender != null && prefixed != null) {
                     rawBody.substring(prefixed.range.last + 1).trimStart()
@@ -375,6 +415,17 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
                 )
             }
     }.getOrDefault(emptyList()) else emptyList()
+    val instagramTextSender = if (packageName == "com.instagram.android" && notification.channelId == "ig_direct") {
+        Regex("^\\s*([^:\n]{1,80}):\\s+.+$").find(text)?.groupValues?.getOrNull(1)?.cleanHubSender()
+    } else null
+    val conversationTitle = if (packageName == "com.instagram.android" && notification.channelId == "ig_direct") {
+        messages.asReversed().firstNotNullOfOrNull { message ->
+            message.sender?.takeIf(String::isNotBlank)
+        } ?: instagramTextSender ?: suppliedConversationTitle
+    } else suppliedConversationTitle
+    val displayText = if (instagramTextSender != null && conversationTitle.equals(instagramTextSender, true)) {
+        text.substringAfter(':').trimStart()
+    } else text
     var displayImageIsMonochrome = false
     val displayImage = runCatching {
         val latestPersonIcon = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -408,7 +459,7 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
         appName = appName,
         title = title.ifBlank { appName },
         conversationTitle = conversationTitle,
-        text = text,
+        text = displayText,
         expandedText = expandedText,
         textLines = textLines,
         messages = messages,
@@ -534,32 +585,34 @@ private val AGGREGATE_SUMMARY_TEXT = Regex(
 private fun String.cleanHubSender(): String = trim().trimStart('~', '～', '\u202f', '\u00a0').trim()
 
 fun HubItem.sendReply(context: android.content.Context, text: String): Boolean {
-    val reply = replyAction ?: run {
-        Log.w("MinimalHubReply", "no reply action key=$key pkg=$packageName")
-        return false
-    }
+    val reply = replyAction ?: return false
+    return reply.sendReply(context, key, packageName, text)
+}
+
+fun HubReplyAction.sendReply(
+    context: android.content.Context,
+    guardKey: String,
+    packageName: String,
+    text: String,
+): Boolean {
     if (text.isBlank()) return false
-    if (!HubReplySendGuard.acquire(key, text)) {
-        Log.i("MinimalHubReply", "ignored repeated send key=$key")
+    if (!HubReplySendGuard.acquire(guardKey, text)) {
         return true
     }
-    Log.i("MinimalHubReply", "send key=$key pkg=$packageName inputs=${reply.remoteInputs.joinToString { it.resultKey }} length=${text.length}")
     return runCatching {
         val results = android.os.Bundle().apply {
-            reply.remoteInputs.forEach { putCharSequence(it.resultKey, text) }
+            remoteInputs.forEach { putCharSequence(it.resultKey, text) }
         }
         val fillIn = Intent()
-        RemoteInput.addResultsToIntent(reply.remoteInputs, fillIn, results)
+        RemoteInput.addResultsToIntent(remoteInputs, fillIn, results)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             RemoteInput.setResultsSource(fillIn, RemoteInput.SOURCE_FREE_FORM_INPUT)
         }
-        reply.pendingIntent.send(context, 0, fillIn)
-        Log.i("MinimalHubReply", "pendingIntent accepted key=$key")
-        HubRepository.recordSentReply(key, text)
+        pendingIntent.send(context, 0, fillIn)
+        HubRepository.recordSentReply(guardKey, text)
         true
     }.onFailure {
-        HubReplySendGuard.release(key, text)
-        Log.e("MinimalHubReply", "pendingIntent failed key=$key", it)
+        HubReplySendGuard.release(guardKey, text)
     }.getOrDefault(false)
 }
 

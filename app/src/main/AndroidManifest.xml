@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
@@ -66,6 +67,10 @@
             android:icon="@drawable/ic_commander_bar"
             android:label="Commander Settings" />
         <activity
+            android:name=".MessagingContactsActivity"
+            android:exported="false"
+            android:label="Messaging contacts" />
+        <activity
             android:name=".MainActivity"
             android:excludeFromRecents="true"
             android:exported="true"
@@ -98,7 +103,6 @@
             android:configChanges="density|keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:finishOnTaskLaunch="true"
             android:launchMode="singleTop"
             android:taskAffinity="com.astroboii47.commander.overlay"
             android:theme="@style/Theme.MinimalCommand.Overlay">
@@ -113,14 +117,30 @@
             android:exported="true"
             android:icon="@drawable/ic_commander_bar"
             android:label="App Switcher"
-            android:launchMode="singleTask"
-            android:theme="@style/Theme.MinimalCommand.Overlay">
+            android:launchMode="singleTop"
+            android:noHistory="true"
+            android:taskAffinity="com.astroboii47.commander.overlay"
+            android:theme="@android:style/Theme.NoDisplay">
             <intent-filter android:priority="-10">
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <intent-filter>
                 <action android:name="com.astroboii47.commander.OPEN_SWITCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".KeyControlActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_bar"
+            android:label="Key Control"
+            android:launchMode="singleTop"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="com.astroboii47.commander.OPEN_KEY_CONTROL" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
@@ -145,10 +165,54 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".CommanderHubShortcutActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_hub"
+            android:label="Commander Hub"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.CREATE_SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".CommanderSwitcherShortcutActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_bar"
+            android:label="Commander Switcher"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.CREATE_SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".CommanderKeyControlShortcutActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_bar"
+            android:label="Commander Key Control"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.CREATE_SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".HubActivity"
             android:exported="true"
             android:icon="@drawable/ic_commander_hub"
             android:label="Commander Hub"
+            android:theme="@style/Theme.MinimalCommand.Hub" />
+        <activity
+            android:name=".HubHistoryActivity"
+            android:exported="false"
+            android:label="Hub history"
             android:theme="@style/Theme.MinimalCommand.Hub" />
         <activity-alias
             android:name=".CommanderHubLauncherAlias"

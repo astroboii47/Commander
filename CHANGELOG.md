@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.1.0-alpha.6
+
+### Added
+
+- Added Key Control, a keyboard-driven on-screen control layer with compact hints, control search, native scrolling, configurable activation behaviour, and dedicated launcher and hardware shortcuts.
+- Added configurable Commander hardware shortcuts for Command Bar, Hub, App Switcher, and Key Control, including hold-to-switch and sticky App Switcher modes.
+- Added Quick Controls for audio, ringer, brightness, rotation, media, theme, screen recording, QR scanning, battery protection, Mini Mode, Scroll Assistant, Caffeine, screen dimming, and supported split-screen actions.
+- Added searchable Quick Controls and App Shortcuts to normal app results, while preserving their dedicated category entries.
+- Added Todoist task pages for Tasks, Upcoming, and Calendar, with keyboard navigation, filtering, due dates and times, task completion, and direct opening in Todoist.
+- Added richer task parsing with detected dates, times, weekdays, short date forms, AM or PM inference, and Todoist project hashtags.
+- Added alarm creation through the timer command, with detected time previews and matching confirmation feedback.
+- Added Commander Contacts for grouping phone contacts and app conversations under user-defined people, including separate routes for SMS and supported messaging apps.
+- Added a per-person default messaging route that appears first and is used when Commander must choose between assigned apps.
+- Added `@recents` for recent replyable conversations, including pending messages and replies sent through Commander.
+- Added direct number calling through the call command without suggesting unrelated contacts while a number is being entered.
+- Added encrypted Hub notification history with retention options for 24 hours, 7 days, 30 days, 3 months, or indefinitely.
+- Added a dedicated Hub History view, a History shortcut beside Manage, and clear-history controls.
+- Added searchable Settings categories, quick category navigation, a prominent Commander Contacts destination, and a Setup dashboard with live permission status and direct Android settings links.
+- Added scheduled day and night appearance modes plus optional adjustable background darkness for devices without blur support.
+- Added more file actions, including Delete, Preview, Reveal in folder, Open in app, and File info.
+
+### Improved
+
+- Improved App Switcher responsiveness, preview caching, recent-task ordering, keyboard navigation, confirmation feedback, and task dismissal behaviour.
+- Improved messaging route presentation with platform-aware icons, notification glyph caching, direct-send preference, contact merging, and clearer route labels.
+- Improved messaging command highlighting so the full selected app scope, such as `@Messenger`, uses the accent colour.
+- Improved Messenger hand-off with conversation matching and a user-confirmed recipient selection flow where direct sending is unavailable.
+- Improved Hub notification extraction for messaging, Instagram, Todoist, weather, email, group summaries, missed calls, and app-provided actions.
+- Improved Hub conversation continuity by preserving locally sent replies and reducing duplicate incoming, outgoing, summary, and updated notification rows.
+- Improved Hub actions with consistent icons, inline confirmation, snooze support, keyboard shortcuts, scrolling, and return-to-Hub behaviour.
+- Improved long-list behaviour across Hub, contacts, tasks, aliases, app shortcuts, files, Settings, Key Control, and App Switcher.
+- Improved timer, alarm, task, app, Quick Control, and Hub confirmation glow placement so feedback appears on the item that was activated.
+- Improved Command Bar focus and IME startup so rapid physical-key typing is captured more reliably.
+- Improved result ranking for exact contacts, Commander destinations, app aliases, Tasker tasks, Quick Controls, and web-search fallback.
+- Improved long command text layout so input and result cards remain readable on compact displays.
+
+### Fixed
+
+- Fixed rapid typing occasionally dropping the second or subsequent character after Command Bar activation.
+- Fixed held first-key alternate triggers becoming unreliable after the input startup changes.
+- Fixed completed or disabled Quick Controls retaining an active confirmation highlight.
+- Fixed value-based Quick Controls inserting command text instead of choosing a safe default or requesting a value.
+- Fixed App Switcher sometimes opening Hub behind it, restoring stale filter text, changing order after clearing a filter, or returning to the first card after dismissal.
+- Fixed task lists remaining stale after changes made in Todoist or on another device.
+- Fixed `@recents` reporting failure after a message had actually been sent.
+- Fixed SMS direct-send and notification-reply routes appearing as duplicate contacts.
+- Fixed newly selected default messaging routes retaining their previous order in an already-running Command Bar.
+- Fixed direct SMS contacts sitting above a grouped person's chosen default messaging route.
+- Fixed Instagram notifications using the signed-in account name instead of the message sender where sender data is available.
+- Fixed Hub action menus, category tabs, calendar tasks, notification details, and bottom rows clipping on smaller displays.
+- Fixed notification images, timestamps, app names, unread indicators, and expanded rows shifting or becoming misaligned.
+- Fixed file and folder filters, previews, selection restoration, action-menu navigation, and folder opening with supported file managers.
+- Fixed Command Bar blur and confirmation transitions briefly revealing the underlying app before Commander closed.
+
 ## 0.1.0-alpha.5.1
 
 - Fixed generic Commander and keyboard shortcut launches sometimes opening App Switcher instead of Commander Hub.

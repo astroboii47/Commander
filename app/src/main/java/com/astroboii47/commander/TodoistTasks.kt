@@ -22,25 +22,36 @@ data class TodoistTask(
 )
 
 object TodoistTasks {
-    private const val CACHE_MS = 60_000L
+    private const val PROJECT_CACHE_MS = 30 * 60_000L
     @Volatile private var cachedAt = 0L
     @Volatile private var cached = emptyList<TodoistTask>()
+    @Volatile private var projectsCachedAt = 0L
+    @Volatile private var cachedProjects = emptyMap<String, String>()
 
-    fun cached(): List<TodoistTask> = if (System.currentTimeMillis() - cachedAt <= CACHE_MS) cached else emptyList()
+    // Stale data is still useful for an instant first frame. The caller
+    // refreshes it in the background and replaces it when the network returns.
+    fun cached(): List<TodoistTask> = cached
 
     fun load(context: Context): Result<List<TodoistTask>> = runCatching {
         val token = TodoistSettings.token(context)
         require(token.isNotBlank()) { "Add your Todoist API token in Commander Settings" }
-        val projects = request("https://api.todoist.com/api/v1/projects?limit=200", token)
-            .optJSONArray("results")?.let { array ->
-                buildMap {
-                    for (i in 0 until array.length()) {
-                        val item = array.optJSONObject(i) ?: continue
-                        put(item.optString("id"), item.optString("name"))
+        val now = System.currentTimeMillis()
+        val projects = cachedProjects.takeIf { it.isNotEmpty() && now - projectsCachedAt <= PROJECT_CACHE_MS }
+            ?: request("https://api.todoist.com/api/v1/projects?limit=200", token)
+                .optJSONArray("results")?.let { array ->
+                    buildMap {
+                        for (i in 0 until array.length()) {
+                            val item = array.optJSONObject(i) ?: continue
+                            put(item.optString("id"), item.optString("name"))
+                        }
                     }
+                }.orEmpty().also {
+                    cachedProjects = it
+                    projectsCachedAt = now
                 }
-            }.orEmpty()
-        val filter = URLEncoder.encode("overdue | today", StandardCharsets.UTF_8.name())
+        // One response powers Today, Upcoming and Calendar. This avoids a new
+        // request every time the user changes pages.
+        val filter = URLEncoder.encode("overdue | 30 days", StandardCharsets.UTF_8.name())
         val response = request("https://api.todoist.com/api/v1/tasks/filter?query=$filter&limit=200", token)
         val results = response.optJSONArray("results")
         val tasks = buildList {

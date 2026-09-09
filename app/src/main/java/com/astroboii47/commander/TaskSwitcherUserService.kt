@@ -4,19 +4,58 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import android.hardware.HardwareBuffer
+import android.content.Intent
+import android.content.ComponentName
+import android.util.Log
 
 class TaskSwitcherUserService(@Suppress("UNUSED_PARAMETER") context: Context) : ITaskSwitcherService.Stub() {
     constructor() : this(throw UnsupportedOperationException("Context constructor required"))
 
+    override fun getRecentTasks(maxTasks: Int): Array<String> = runCatching {
+        val service = activityTaskManager()
+        val method = service.javaClass.methods.first {
+            it.name == "getRecentTasks" && it.parameterTypes.size == 3
+        }
+        val slice = method.invoke(service, maxTasks.coerceIn(1, 64), 0, 0)
+        val tasks = slice.javaClass.getMethod("getList").invoke(slice) as? List<*> ?: emptyList<Any>()
+        tasks.mapNotNull { task ->
+            task ?: return@mapNotNull null
+            val taskId = intField(task, "taskId", "id", "persistentId") ?: return@mapNotNull null
+            val rootTaskId = intField(task, "rootTaskId") ?: taskId
+            val baseIntent = field(task, "baseIntent") as? Intent
+            val component = (field(task, "topActivity") as? ComponentName)
+                ?: (field(task, "baseActivity") as? ComponentName)
+                ?: baseIntent?.component
+                ?: return@mapNotNull null
+            val flags = baseIntent?.flags ?: 0
+            val hasLiveActivities = field(task, "topActivity") != null
+            listOf(
+                taskId.toString(),
+                rootTaskId.toString(),
+                component.packageName,
+                component.flattenToShortString(),
+                flags.toString(),
+                if (hasLiveActivities) "1" else "0",
+            ).joinToString("\u001f")
+        }.toTypedArray()
+    }.getOrDefault(emptyArray())
+
     override fun getTaskSnapshot(taskId: Int, width: Int, height: Int, captureNow: Boolean): Bitmap? = runCatching {
         val service = activityTaskManager()
-        val get = service.javaClass.methods.first { it.name == "getTaskSnapshot" && it.parameterTypes.size == 2 }
+        val get = service.javaClass.methods.firstOrNull {
+            it.name == "getTaskSnapshot" && it.parameterTypes.size in 2..3
+        } ?: return@runCatching null
         val fresh = if (captureNow) service.javaClass.methods.firstOrNull {
             it.name == "takeTaskSnapshot" && it.parameterTypes.size in 1..2
         }?.let { if (it.parameterTypes.size == 2) it.invoke(service, taskId, true) else it.invoke(service, taskId) } else null
-        decode(fresh, width, height) ?: decode(get.invoke(service, taskId, false), width, height)
-            ?: decode(get.invoke(service, taskId, true), width, height)
-    }.getOrNull()
+        fun read(lowResolution: Boolean): Any? = when (get.parameterTypes.size) {
+            2 -> get.invoke(service, taskId, lowResolution)
+            3 -> get.invoke(service, taskId, lowResolution, true)
+            else -> null
+        }
+        decode(fresh, width, height) ?: decode(read(false), width, height)
+            ?: decode(read(true), width, height)
+    }.onFailure { Log.e(TAG, "Snapshot failed for task $taskId", it) }.getOrNull()
 
     override fun switchToTask(taskId: Int, rootTaskId: Int): Boolean = runCatching {
         val service = activityTaskManager()
@@ -43,6 +82,21 @@ class TaskSwitcherUserService(@Suppress("UNUSED_PARAMETER") context: Context) : 
     private fun activityTaskManager(): Any = Class.forName("android.app.ActivityTaskManager")
         .getDeclaredMethod("getService").invoke(null)
 
+    private fun field(instance: Any, name: String): Any? {
+        var type: Class<*>? = instance.javaClass
+        while (type != null) {
+            runCatching {
+                return type.getDeclaredField(name).apply { isAccessible = true }.get(instance)
+            }
+            type = type.superclass
+        }
+        return null
+    }
+
+    private fun intField(instance: Any, vararg names: String): Int? = names.firstNotNullOfOrNull { name ->
+        (field(instance, name) as? Number)?.toInt()?.takeIf { it > 0 }
+    }
+
     private fun decode(snapshot: Any?, width: Int, height: Int): Bitmap? {
         snapshot ?: return null
         val buffer = snapshot.javaClass.getMethod("getHardwareBuffer").invoke(snapshot) as HardwareBuffer
@@ -55,5 +109,9 @@ class TaskSwitcherUserService(@Suppress("UNUSED_PARAMETER") context: Context) : 
         hardware.recycle()
         buffer.close()
         return scaled
+    }
+
+    private companion object {
+        const val TAG = "CommanderSwitcher"
     }
 }

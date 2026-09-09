@@ -31,6 +31,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
@@ -57,7 +59,10 @@ class SwitcherActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         startActivity(android.content.Intent(this, OverlayActivity::class.java).apply {
             putExtra(OverlayActivity.EXTRA_START_SWITCHER, true)
-            addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            addFlags(
+                android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+            )
         })
         finish()
     }
@@ -108,11 +113,15 @@ private fun SwitcherUi(close: () -> Unit) {
     }
     LaunchedEffect(Unit) {
         client.bind()
-        allTasks = withContext(Dispatchers.IO) { TaskSwitcherShell.load(context) }
+        allTasks = withContext(Dispatchers.IO) { TaskSwitcherShell.load(context, client) }
+        launch(Dispatchers.IO) { client.prefetch(allTasks.take(3)) }
         selected = 0
         focus.requestFocus()
     }
-    LaunchedEffect(selected) { if (selected in tasks.indices) listState.animateScrollToItem(selected) }
+    val selectedTaskId = tasks.getOrNull(selected)?.taskId
+    LaunchedEffect(selected, selectedTaskId) {
+        if (selected in tasks.indices) listState.animateScrollToItem(selected)
+    }
     DisposableEffect(Unit) { onDispose { client.unbind() } }
     Box(
         Modifier.fillMaxSize()
@@ -164,10 +173,11 @@ private fun SwitcherUi(close: () -> Unit) {
 }
 
 @Composable
-internal fun SwitcherCard(task: SwitcherTask, selected: Boolean, accent: ComposeColor, tile: ComposeColor, text: ComposeColor, border: ComposeColor, client: TaskSwitcherClient, onDismiss: () -> Unit, open: () -> Unit) {
+internal fun SwitcherCard(task: SwitcherTask, selected: Boolean, accent: ComposeColor, tile: ComposeColor, text: ComposeColor, border: ComposeColor, client: TaskSwitcherClient, executing: Boolean = false, onDismiss: () -> Unit, open: () -> Unit) {
     val context = LocalContext.current
-    var preview by remember(task.taskId) { mutableStateOf(task.preview) }
+    var preview by remember(task.taskId) { mutableStateOf(task.preview ?: client.cachedPreview(task.taskId)) }
     val previewAlpha = remember(task.taskId) { Animatable(if (preview == null) 0f else 1f) }
+    val executionPulse = remember(task.taskId) { Animatable(0f) }
     val swipeOffset = remember(task.taskId) { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val appIcon = remember(task.packageName) {
@@ -180,9 +190,19 @@ internal fun SwitcherCard(task: SwitcherTask, selected: Boolean, accent: Compose
                 previewAlpha.snapTo(0f)
                 previewAlpha.animateTo(1f, tween(180))
             }
+        } else if (client.previewNeedsRefresh(task.taskId)) {
+            withContext(Dispatchers.IO) { client.refreshPreview(task.taskId, 360, 220) }?.let { preview = it }
         }
     }
-    Column(
+    LaunchedEffect(executing) {
+        if (executing) {
+            executionPulse.snapTo(0f)
+            executionPulse.animateTo(1f, tween(90))
+            executionPulse.animateTo(.58f, tween(150))
+        } else executionPulse.animateTo(0f, tween(110))
+    }
+    val shape = RoundedCornerShape(16.dp)
+    Box(
         Modifier.width(210.dp).fillMaxHeight()
             .graphicsLayer { translationY = swipeOffset.value; alpha = (1f + swipeOffset.value / 260f).coerceIn(.35f, 1f) }
             .pointerInput(task.taskId) {
@@ -204,12 +224,32 @@ internal fun SwitcherCard(task: SwitcherTask, selected: Boolean, accent: Compose
                     },
                     onDragCancel = { scope.launch { swipeOffset.animateTo(0f, tween(170)) } },
                 )
-            }
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) accent.copy(alpha = .24f) else tile)
-            .border(if (selected) 2.dp else 1.dp, if (selected) accent else border, RoundedCornerShape(16.dp))
-            .clickable(onClick = open).padding(8.dp),
+            },
     ) {
+        if (executionPulse.value > 0f) {
+            Box(
+                Modifier.matchParentSize()
+                    .blur((10 + executionPulse.value * 9).dp, BlurredEdgeTreatment.Unbounded)
+                    .border(
+                        (3 + executionPulse.value * 3).dp,
+                        accent.copy(alpha = .34f + executionPulse.value * .58f),
+                        shape,
+                    ),
+            )
+        }
+        Column(
+            Modifier.matchParentSize().clip(shape)
+                .background(
+                    if (executing) accent.copy(alpha = .34f + executionPulse.value * .20f)
+                    else if (selected) accent.copy(alpha = .24f) else tile,
+                )
+                .border(
+                    if (executing) 2.dp else if (selected) 2.dp else 1.dp,
+                    if (executing) ComposeColor.White.copy(alpha = .72f) else if (selected) accent else border,
+                    shape,
+                )
+                .clickable(enabled = !executing, onClick = open).padding(8.dp),
+        ) {
         Box(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(11.dp)).background(ComposeColor(0xFF252525)), contentAlignment = Alignment.Center) {
             val bitmap = preview
             if (bitmap != null) {
@@ -221,6 +261,7 @@ internal fun SwitcherCard(task: SwitcherTask, selected: Boolean, accent: Compose
         Row(Modifier.fillMaxWidth().padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(task.label, color = text, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
             if (appIcon != null) Image(appIcon, null, Modifier.padding(start = 8.dp, end = 5.dp).size(18.dp))
+        }
         }
     }
 }

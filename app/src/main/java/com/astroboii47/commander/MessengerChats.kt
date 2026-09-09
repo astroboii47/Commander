@@ -2,13 +2,11 @@ package com.astroboii47.commander
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.File
 import java.io.FileOutputStream
 import android.app.PendingIntent
-import android.util.Log
 import android.app.ActivityOptions
 import android.os.Build
 
@@ -23,6 +21,12 @@ object MessengerSettings {
 object MessengerChatStore {
     private const val PACKAGE = "com.facebook.orca"
     private const val PREFS = "messenger_chats"
+    private const val CONTACT_PREFS = "messenger_contact_settings"
+    private const val SAVED = "saved"
+    private const val HIDDEN = "hidden"
+    private const val SEEN_PREFIX = "seen_"
+    private const val NAME_PREFIX = "name_"
+    private const val DISCOVERY_RETENTION_MS = 30L * 24L * 60L * 60L * 1000L
     private val liveContentIntents = mutableMapOf<String, PendingIntent>()
 
     fun discover(context: Context, shortcutId: String?, label: String?, avatar: Bitmap? = null) {
@@ -30,6 +34,8 @@ object MessengerChatStore {
         val name = label?.trim().orEmpty()
         if (id.isBlank() || name.isBlank()) return
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(id, name).apply()
+        context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE).edit()
+            .putLong(SEEN_PREFIX + id, System.currentTimeMillis()).apply()
         if (MessengerSettings.profilePhotos(context) && avatar != null) runCatching {
             FileOutputStream(avatarFile(context, id)).use { avatar.compress(Bitmap.CompressFormat.PNG, 90, it) }
         }
@@ -43,21 +49,120 @@ object MessengerChatStore {
     fun search(context: Context, query: String, limit: Int): List<ContactResult> {
         val needle = query.trim()
         if (needle.isBlank() || !isInstalled(context)) return emptyList()
+        val settings = context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE)
+        val saved = settings.getStringSet(SAVED, emptySet()).orEmpty()
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).all
             .mapNotNull { (id, value) ->
+                if (id !in saved) return@mapNotNull null
                 val name = value as? String ?: return@mapNotNull null
-                if (!name.contains(needle, ignoreCase = true)) return@mapNotNull null
-                ContactResult(name, "", "Messenger", id, loadAvatar(context, id))
+                val displayName = settings.getString(NAME_PREFIX + id, null)?.takeIf(String::isNotBlank) ?: name
+                if (!displayName.contains(needle, ignoreCase = true)) return@mapNotNull null
+                ContactResult(displayName, "", "Messenger", id, loadAvatar(context, id))
             }
             .sortedWith(compareBy<ContactResult> { !it.name.startsWith(needle, true) }.thenBy { it.name.lowercase() })
             .take(limit)
     }
 
+    data class DiscoveredConversation(
+        val id: String,
+        val originalName: String,
+        val displayName: String,
+        val saved: Boolean,
+        val hidden: Boolean,
+    )
+
+    fun discovered(context: Context, limit: Int = Int.MAX_VALUE, includeHidden: Boolean = false): List<DiscoveredConversation> {
+        val now = System.currentTimeMillis()
+        val settings = context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE)
+        val saved = settings.getStringSet(SAVED, emptySet()).orEmpty()
+        val hidden = settings.getStringSet(HIDDEN, emptySet()).orEmpty()
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).all
+            .mapNotNull { (id, value) ->
+                val original = value as? String ?: return@mapNotNull null
+                val isHidden = id in hidden
+                if (isHidden && !includeHidden) return@mapNotNull null
+                val seenKey = SEEN_PREFIX + id
+                var seen = settings.getLong(seenKey, 0L)
+                if (seen == 0L) {
+                    seen = now
+                    settings.edit().putLong(seenKey, seen).apply()
+                }
+                if (id !in saved && now - seen > DISCOVERY_RETENTION_MS) return@mapNotNull null
+                DiscoveredConversation(
+                    id,
+                    original,
+                    settings.getString(NAME_PREFIX + id, null)?.takeIf(String::isNotBlank) ?: original,
+                    id in saved,
+                    isHidden,
+                ) to seen
+            }
+            .sortedWith(compareByDescending<Pair<DiscoveredConversation, Long>> { it.first.saved }.thenByDescending { it.second })
+            .take(limit)
+            .map { it.first }
+    }
+
+    fun save(context: Context, id: String, displayName: String? = null) {
+        val prefs = context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE)
+        val saved = prefs.getStringSet(SAVED, emptySet()).orEmpty().toMutableSet().apply { add(id) }
+        prefs.edit().putStringSet(SAVED, saved).apply {
+            displayName?.trim()?.takeIf(String::isNotBlank)?.let { putString(NAME_PREFIX + id, it) }
+        }.apply()
+    }
+
+    fun unsave(context: Context, id: String) {
+        val prefs = context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE)
+        val saved = prefs.getStringSet(SAVED, emptySet()).orEmpty().toMutableSet().apply { remove(id) }
+        prefs.edit().putStringSet(SAVED, saved).remove(NAME_PREFIX + id).apply()
+    }
+
+    fun rename(context: Context, id: String, displayName: String) {
+        val name = displayName.trim()
+        if (name.isBlank()) return
+        context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE).edit()
+            .putString(NAME_PREFIX + id, name).apply()
+    }
+
+    fun hide(context: Context, id: String) {
+        val prefs = context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE)
+        val hidden = prefs.getStringSet(HIDDEN, emptySet()).orEmpty().toMutableSet().apply { add(id) }
+        val saved = prefs.getStringSet(SAVED, emptySet()).orEmpty().toMutableSet().apply { remove(id) }
+        prefs.edit().putStringSet(HIDDEN, hidden).putStringSet(SAVED, saved).remove(NAME_PREFIX + id).apply()
+    }
+
+    fun restore(context: Context, id: String) {
+        val prefs = context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE)
+        val hidden = prefs.getStringSet(HIDDEN, emptySet()).orEmpty().toMutableSet().apply { remove(id) }
+        prefs.edit().putStringSet(HIDDEN, hidden).apply()
+    }
+
+    fun delete(context: Context, id: String) {
+        val settings = context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE)
+        val saved = settings.getStringSet(SAVED, emptySet()).orEmpty().toMutableSet().apply { remove(id) }
+        val hidden = settings.getStringSet(HIDDEN, emptySet()).orEmpty().toMutableSet().apply { remove(id) }
+        settings.edit()
+            .putStringSet(SAVED, saved)
+            .putStringSet(HIDDEN, hidden)
+            .remove(SEEN_PREFIX + id)
+            .remove(NAME_PREFIX + id)
+            .apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(id).apply()
+        liveContentIntents.remove(id)
+        avatarFile(context, id).delete()
+    }
+
+    fun clearUnlinked(context: Context) {
+        val settings = context.getSharedPreferences(CONTACT_PREFS, Context.MODE_PRIVATE)
+        val saved = settings.getStringSet(SAVED, emptySet()).orEmpty()
+        val discoveries = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = discoveries.edit()
+        discoveries.all.keys.filterNot(saved::contains).forEach(editor::remove)
+        editor.apply()
+    }
+
     fun openDraft(context: Context, target: ContactResult, body: String): String? {
         val shortcutId = target.messengerShortcutId ?: return "Messenger conversation is unavailable"
-        Log.i("MinimalMessenger", "openDraft id=$shortcutId live=${liveContentIntents.containsKey(shortcutId)} bodyLength=${body.length}")
-        MessengerDraftBridge.arm(context, body)
         liveContentIntents[shortcutId]?.let { pendingIntent ->
+            MessengerDraftBridge.arm(context, body)
             return runCatching {
                 val options = ActivityOptions.makeBasic().apply {
                     if (Build.VERSION.SDK_INT >= 34) {
@@ -65,34 +170,30 @@ object MessengerChatStore {
                     }
                 }
                 pendingIntent.send(context, 0, null, null, null, null, options.toBundle())
-                Log.i("MinimalMessenger", "contentIntent.send accepted id=$shortcutId")
                 null
             }.getOrElse {
-                Log.e("MinimalMessenger", "contentIntent.send failed id=$shortcutId", it)
                 MessengerDraftBridge.clear(context)
                 "Messenger notification action expired · wait for a new message"
             }
         }
-        val uri = shortcutUri(shortcutId) ?: return "This Messenger conversation type is not supported yet"
-        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-            setClassName(PACKAGE, "com.facebook.messenger.intents.IntentHandlerActivity")
-            addCategory(Intent.CATEGORY_DEFAULT)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            setClassName(PACKAGE, "com.facebook.messenger.intents.ShareIntentHandler")
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, body)
+            // Messenger's share activity parses this extra as a Long even
+            // though its published encrypted/group shortcut IDs contain a
+            // textual prefix. Passing the full published ID crashes Messenger.
+            shortcutId.substringAfterLast(':').takeIf { it.all(Char::isDigit) }?.let {
+                putExtra(Intent.EXTRA_SHORTCUT_ID, it)
+            }
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
+        MessengerShareSearchBridge.arm(context, target.name)
         return runCatching { context.startActivity(intent); null }.getOrElse {
-            Log.e("MinimalMessenger", "deep link failed id=$shortcutId uri=$uri", it)
+            MessengerShareSearchBridge.clear(context)
             MessengerDraftBridge.clear(context)
-            "Messenger could not open this conversation"
+            "Messenger could not prepare this message"
         }
-    }
-
-    private fun shortcutUri(id: String): Uri? = when {
-        id.matches(Regex("\\d+")) -> Uri.parse("fb-messenger://user/$id")
-        id.startsWith("thread_shortcut_GROUP:") -> Uri.parse("fb-messenger://groupthreadfbid/${id.substringAfter(':')}")
-        id.startsWith("thread_shortcut_ADVANCED_CRYPTO_ONE_TO_ONE:") ->
-            Uri.parse("fb-messenger://advanced_crypto_one_to_one/${id.substringAfter(':')}")
-        id.startsWith("thread_shortcut_MARKETPLACE:") -> Uri.parse("fb-messenger://marketplace/${id.substringAfter(':')}")
-        else -> null
     }
 
     private fun isInstalled(context: Context) = runCatching {
@@ -103,6 +204,51 @@ object MessengerChatStore {
     private fun loadAvatar(context: Context, id: String): Bitmap? {
         if (!MessengerSettings.profilePhotos(context)) return null
         return runCatching { BitmapFactory.decodeFile(avatarFile(context, id).absolutePath) }.getOrNull()
+    }
+}
+
+object MessengerShareSearchBridge {
+    private const val PREFS = "messenger_share_search"
+    private const val TARGET = "target"
+    private const val ARMED_AT = "armed_at"
+    private const val STAGE = "stage"
+    private const val READY = "ready"
+    private const val TIMEOUT_MS = 20_000L
+
+    data class Pending(val target: String, val stage: Int, val ready: Boolean)
+
+    fun arm(context: Context, target: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(TARGET, target.trim())
+            .putLong(ARMED_AT, System.currentTimeMillis())
+            .putInt(STAGE, 0)
+            .putBoolean(READY, false)
+            .apply()
+        HomeTypingAccessibilityService.monitorAutomation(TIMEOUT_MS)
+    }
+
+    fun pending(context: Context): Pending? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (System.currentTimeMillis() - prefs.getLong(ARMED_AT, 0L) > TIMEOUT_MS) {
+            clear(context)
+            return null
+        }
+        val target = prefs.getString(TARGET, null)?.takeIf(String::isNotBlank) ?: return null
+        return Pending(target, prefs.getInt(STAGE, 0), prefs.getBoolean(READY, false))
+    }
+
+    fun setStage(context: Context, stage: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(STAGE, stage).apply()
+    }
+
+    fun markReady(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(READY, true).apply()
+        HomeTypingAccessibilityService.automationFinished()
+    }
+
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+        HomeTypingAccessibilityService.automationFinished()
     }
 }
 

@@ -17,8 +17,9 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 enum class ControlKind {
-    Flashlight, Rotation, Brightness, Volume, Play, Pause, Next,
+    Flashlight, Rotation, Brightness, Volume, AudioOutput, BluetoothDevices, Play, Pause, Next,
     RingerMode, Theme, BatteryProtection, Caffeine, ScreenDimmer, QrScanner, ScreenRecord, MiniMode, ScrollAssistant,
+    SplitScreen,
 }
 
 data class ControlResult(
@@ -31,6 +32,31 @@ data class ControlResult(
 )
 
 object ControlActions {
+    private const val CONTROL_STATE_PREFS = "quick_control_state"
+    private const val KEY_BATTERY_PROTECTION_ENABLED = "battery_protection_enabled"
+
+    /**
+     * A mixed-in Quick Control must be executable without first entering the
+     * dedicated `!control` screen. Only choose defaults where doing so is
+     * predictable: auto brightness is the natural no-number action, while
+     * battery protection is a repeatable on/off toggle.
+     */
+    fun resolveDefault(activity: Activity, result: ControlResult): ControlResult = when (result.kind) {
+        ControlKind.Brightness -> if (result.percent == null && !result.automatic) {
+            result.copy(automatic = true)
+        } else result
+        ControlKind.BatteryProtection -> if (result.option == null) {
+            val currentlyEnabled = activity.getSharedPreferences(CONTROL_STATE_PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KEY_BATTERY_PROTECTION_ENABLED, false)
+            result.copy(option = if (currentlyEnabled) "off" else "on")
+        } else result
+        ControlKind.RingerMode -> if (result.option == null) {
+            val audio = activity.getSystemService(AudioManager::class.java)
+            result.copy(option = if (audio.ringerMode == AudioManager.RINGER_MODE_NORMAL) "vibrate" else "normal")
+        } else result
+        else -> result
+    }
+
     fun feedback(activity: Activity, result: ControlResult): String = when (result.kind) {
         ControlKind.Flashlight -> if (FlashlightState.enabled) "on" else "off"
         ControlKind.Rotation -> if (
@@ -38,6 +64,7 @@ object ControlActions {
         ) "on" else "off"
         ControlKind.Brightness -> if (result.automatic) "auto" else "${result.percent ?: 0}%"
         ControlKind.Volume -> "${result.percent ?: 0}%"
+        ControlKind.AudioOutput, ControlKind.BluetoothDevices -> "opened"
         ControlKind.RingerMode -> when (result.option) {
             "sound", "normal" -> "on"
             "silent" -> "off"
@@ -55,6 +82,7 @@ object ControlActions {
         ControlKind.Next -> "skipped"
         ControlKind.QrScanner -> "opened"
         ControlKind.ScreenRecord -> "opened"
+        ControlKind.SplitScreen -> "opened"
         ControlKind.Caffeine, ControlKind.ScreenDimmer,
         ControlKind.MiniMode, ControlKind.ScrollAssistant -> "toggled"
     }
@@ -80,6 +108,8 @@ object ControlActions {
                 automatic,
             ),
             ControlResult(ControlKind.Volume, "Volume${percent?.let { " · $it%" }.orEmpty()}", "set media volume", percent),
+            ControlResult(ControlKind.AudioOutput, "Audio output", "switch speaker or audio device"),
+            ControlResult(ControlKind.BluetoothDevices, "Bluetooth devices", "connect or disconnect paired devices"),
             ControlResult(ControlKind.Play, "Play", "resume active media"),
             ControlResult(ControlKind.Pause, "Pause", "pause active media"),
             ControlResult(ControlKind.Next, "Next", "skip to next track"),
@@ -105,6 +135,7 @@ object ControlActions {
             ControlResult(ControlKind.ScreenDimmer, "Screen dimmer", "toggle Screen Filter"),
             ControlResult(ControlKind.QrScanner, "QR scanner", "scan a QR code"),
             ControlResult(ControlKind.ScreenRecord, "Screen recording", "open the system recorder"),
+            ControlResult(ControlKind.SplitScreen, "Split screen", "split the active app"),
             ControlResult(ControlKind.MiniMode, "Mini mode", "toggle Titan mini mode"),
             ControlResult(ControlKind.ScrollAssistant, "Scroll Assistant", "toggle Titan touchpad scrolling"),
         )
@@ -125,6 +156,10 @@ object ControlActions {
                 ControlKind.Rotation -> term in listOf("rotation", "rotate", "auto rotate") || "rotation".startsWith(term)
                 ControlKind.Brightness -> term in listOf("brightness", "bright") || "brightness".startsWith(term)
                 ControlKind.Volume -> term in listOf("volume", "vol") || "volume".startsWith(term)
+                ControlKind.AudioOutput -> term in listOf("audio", "audio output", "output", "speaker", "media output") ||
+                    "audio output".startsWith(term)
+                ControlKind.BluetoothDevices -> term in listOf("bluetooth", "bt", "bluetooth devices", "devices") ||
+                    "bluetooth devices".startsWith(term)
                 ControlKind.RingerMode -> term in listOf("ringer", "ringer mode", "sound mode") || "ringer mode".startsWith(term)
                 ControlKind.Theme -> term in listOf("theme", "dark mode", "light mode") || "theme".startsWith(term)
                 ControlKind.BatteryProtection -> term in listOf("battery", "battery protection", "charging", "charging limit") ||
@@ -133,6 +168,7 @@ object ControlActions {
                 ControlKind.ScreenDimmer -> term in listOf("screen dimmer", "dimmer", "screen filter", "filter") || "screen dimmer".startsWith(term)
                 ControlKind.QrScanner -> term in listOf("qr", "qr scanner", "scanner") || "qr scanner".startsWith(term)
                 ControlKind.ScreenRecord -> term in listOf("record", "screen record", "screen recording") || "screen recording".startsWith(term)
+                ControlKind.SplitScreen -> term in listOf("split", "split screen", "multitask") || "split screen".startsWith(term)
                 ControlKind.MiniMode -> term in listOf("mini", "mini mode") || "mini mode".startsWith(term)
                 ControlKind.ScrollAssistant -> term in listOf("scroll", "scroll assistant", "touchpad scroll") || "scroll assistant".startsWith(term)
                 else -> it.label.lowercase().startsWith(term)
@@ -140,7 +176,8 @@ object ControlActions {
         }
     }
 
-    fun execute(activity: Activity, result: ControlResult): String? = when (result.kind) {
+    fun execute(activity: Activity, result: ControlResult): String? {
+        val error = when (result.kind) {
         ControlKind.Flashlight -> toggleFlashlight(activity)
         ControlKind.Rotation -> if (ensureWriteSettings(activity)) "Allow system settings access, then try rotation again" else {
             val enabled = Settings.System.getInt(activity.contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
@@ -174,6 +211,8 @@ object ControlActions {
             audio.setStreamVolume(AudioManager.STREAM_MUSIC, (percent * max / 100).coerceIn(0, max), AudioManager.FLAG_SHOW_UI)
             null
         }
+        ControlKind.AudioOutput -> launchAudioOutput(activity)
+        ControlKind.BluetoothDevices -> launchBluetoothDevices(activity)
         ControlKind.Play -> media(activity, KeyEvent.KEYCODE_MEDIA_PLAY)
         ControlKind.Pause -> media(activity, KeyEvent.KEYCODE_MEDIA_PAUSE)
         ControlKind.Next -> media(activity, KeyEvent.KEYCODE_MEDIA_NEXT)
@@ -189,6 +228,17 @@ object ControlActions {
         )
         ControlKind.QrScanner -> launchQrScanner(activity)
         ControlKind.ScreenRecord -> launchScreenRecorder(activity)
+        ControlKind.SplitScreen -> {
+            val target = TaskSwitcherShell.underlyingSplitTarget(activity).getOrElse {
+                return it.message ?: "Split screen unavailable"
+            }
+            if (!HomeTypingAccessibilityService.splitWhenForeground(target.taskId, target.packageName)) {
+                "Enable Commander accessibility to use split screen"
+            } else {
+                activity.finish()
+                null
+            }
+        }
         ControlKind.MiniMode -> ShizukuBridge.run(arrayOf("service", "call", "AService", "5"))
         ControlKind.ScrollAssistant -> ShizukuBridge.run(
             arrayOf(
@@ -196,6 +246,18 @@ object ControlActions {
                 "v=\$(getprop persist.sys.scroll_assistant); if [ \"\$v\" = 1 ]; then n=0; else n=1; fi; service call AService 2 s16 persist.sys.scroll_assistant s16 \"\$n\"",
             ),
         )
+        }
+        if (error == null && result.kind == ControlKind.BatteryProtection) {
+            when (result.option) {
+                "on" -> activity.getSharedPreferences(CONTROL_STATE_PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_BATTERY_PROTECTION_ENABLED, true).apply()
+                "off" -> activity.getSharedPreferences(CONTROL_STATE_PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_BATTERY_PROTECTION_ENABLED, false).apply()
+                "70", "80", "90", "100" -> activity.getSharedPreferences(CONTROL_STATE_PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_BATTERY_PROTECTION_ENABLED, true).apply()
+            }
+        }
+        return error
     }
 
     private fun setRingerMode(activity: Activity, requested: String?): String? {
@@ -296,6 +358,31 @@ object ControlActions {
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
         null
     }.getOrElse { "Media control unavailable" }
+
+    private fun launchAudioOutput(activity: Activity): String? = runCatching {
+        val intent = Intent("com.android.systemui.action.LAUNCH_SYSTEM_MEDIA_OUTPUT_DIALOG").setComponent(
+            ComponentName("com.android.systemui", "com.android.systemui.media.dialog.MediaOutputDialogReceiver"),
+        )
+        activity.sendBroadcast(intent)
+        null
+    }.getOrElse {
+        ShizukuBridge.run(
+            arrayOf(
+                "am", "broadcast",
+                "-a", "com.android.systemui.action.LAUNCH_SYSTEM_MEDIA_OUTPUT_DIALOG",
+                "-n", "com.android.systemui/.media.dialog.MediaOutputDialogReceiver",
+            ),
+        ) ?: return null
+        "Audio output switcher unavailable"
+    }
+
+    private fun launchBluetoothDevices(activity: Activity): String? = runCatching {
+        activity.startActivity(
+            Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        )
+        null
+    }.getOrElse { "Bluetooth settings unavailable" }
 
     private fun launchShortcut(activity: Activity, packageName: String, id: String, unavailable: String): String? {
         val shortcut = AppShortcutCatalog.search(activity, "").firstOrNull { it.packageName == packageName && it.id == id }

@@ -29,10 +29,10 @@ android {
 
     defaultConfig {
         applicationId = "com.astroboii47.commander"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.1.0-alpha.5.1"
+        versionCode = 9
+        versionName = "0.1.0-alpha.6"
     }
 
     signingConfigs {

@@ -21,6 +21,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.telephony.SmsManager
 import android.app.PendingIntent
+import android.app.ActivityOptions
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -69,7 +70,7 @@ class CommandEngine(private val activity: Activity) {
     suspend fun askGemini(history: List<AskMessage>): Result<String> =
         withContext(Dispatchers.IO) { GeminiApi.generate(activity.applicationContext, history) }
 
-    fun searchApps(query: String, limit: Int = 7): List<AppResult> {
+    fun searchApps(query: String, limit: Int = 7, includeWebFallback: Boolean = true): List<AppResult> {
         val needle = query.trim().lowercase()
         if (needle == "all") {
             return listOf(AppResult("All apps", INTERNAL_ALL_APPS, null))
@@ -90,14 +91,23 @@ class CommandEngine(private val activity: Activity) {
             if ("switcher".startsWith(needle) || "app switcher".contains(needle)) {
                 add(AppResult("App Switcher", INTERNAL_SWITCHER, null))
             }
+            if ("key control".contains(needle) || "control screen".contains(needle)) {
+                add(AppResult("Key Control", INTERNAL_KEY_CONTROL, null))
+            }
             if ("tasks".startsWith(needle) || "todoist tasks".contains(needle)) {
                 add(AppResult("Tasks", INTERNAL_TASKS, null))
+            }
+            if ("quick controls".contains(needle) || "device controls".contains(needle)) {
+                add(AppResult("Quick Controls", INTERNAL_QUICK_CONTROLS, null))
+            }
+            if ("app shortcuts".contains(needle) || "shortcuts".startsWith(needle)) {
+                add(AppResult("App Shortcuts", INTERNAL_APP_SHORTCUTS, null))
             }
         }
         val matches = (destinations + AppCatalog.search(activity.applicationContext, query, limit).map {
             AppResult(label = it.label, packageName = it.packageName, icon = null)
         }).distinctBy { it.packageName }.take(limit)
-        return if (matches.isEmpty() && needle.isNotBlank() && AppSearchSettings.webFallback.value) {
+        return if (matches.isEmpty() && needle.isNotBlank() && includeWebFallback && AppSearchSettings.webFallback.value) {
             listOf(AppResult("Search web for “${query.trim()}”", INTERNAL_WEB + Uri.encode(query.trim()), null))
         } else matches
     }
@@ -134,11 +144,21 @@ class CommandEngine(private val activity: Activity) {
                 INTERNAL_HUB -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_hub)
             INTERNAL_ALL_APPS, INTERNAL_RECENT_APPS -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_bar)
             INTERNAL_SWITCHER -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_bar)
+            INTERNAL_KEY_CONTROL -> null
+            INTERNAL_QUICK_CONTROLS -> ContextCompat.getDrawable(activity, R.drawable.ic_quick_controls)
+            INTERNAL_APP_SHORTCUTS -> ContextCompat.getDrawable(activity, R.drawable.ic_app_shortcuts)
             else -> if (app.packageName.startsWith(INTERNAL_WEB)) null else AppIconOverrides.load(activity, app.packageName)
                     ?: runCatching { packageManager.getApplicationIcon(app.packageName) }.getOrNull()
             }
             app.copy(icon = icon, adaptiveColor = icon?.let(::extractIconColor))
         }
+    }
+
+    fun webFallbackResult(query: String): AppResult? {
+        val value = query.trim()
+        return if (value.isNotEmpty() && AppSearchSettings.webFallback.value) {
+            AppResult("Search web for “$value”", INTERNAL_WEB + Uri.encode(value), null)
+        } else null
     }
 
     fun loadPackageIcon(packageName: String) =
@@ -340,8 +360,7 @@ class CommandEngine(private val activity: Activity) {
         if (solidIntent.resolveActivity(packageManager) != null) {
             val opened = runCatching {
                 StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
-                activity.startActivity(solidIntent)
-                activity.finish()
+                startActivityAndFinish(solidIntent)
             }.isSuccess
             if (opened) return null
         }
@@ -353,12 +372,12 @@ class CommandEngine(private val activity: Activity) {
         for (packageName in packageCandidates) {
             val targeted = Intent(view).setPackage(packageName)
             if (targeted.resolveActivity(packageManager) != null) {
-                return runCatching { activity.startActivity(targeted); activity.finish(); null }
+                return runCatching { startActivityAndFinish(targeted); null }
                     .getOrElse { "Folder could not be opened" }
             }
         }
         if (view.resolveActivity(packageManager) != null) {
-            return runCatching { activity.startActivity(view); activity.finish(); null }
+            return runCatching { startActivityAndFinish(view); null }
                 .getOrElse { "Folder could not be opened" }
         }
         val picker = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
@@ -484,15 +503,40 @@ class CommandEngine(private val activity: Activity) {
         return startOrFallback(targeted, fallback, "${match.target.label} is unavailable")
     }
 
-    fun searchContacts(query: String, limit: Int = 5, includeMessenger: Boolean = false): List<ContactResult> {
-        if (query.isBlank()) return emptyList()
-        val messenger = if (includeMessenger) MessengerChatStore.search(activity, query, limit) else emptyList()
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return messenger
+    fun searchContacts(
+        query: String,
+        limit: Int = 5,
+        includeMessenger: Boolean = false,
+        platform: MessagingPlatformOption? = null,
+    ): List<ContactResult> {
+        if (query.isBlank() && platform == null) return emptyList()
+        val messenger = if (includeMessenger) CommanderMessagingContacts.search(activity, query, limit, platform) else emptyList()
+        if (platform != null && platform.key != "sms") return messenger
+        val directNumber = if (!includeMessenger && query.trim().matches(Regex("^\\+?[0-9() .-]{3,}$")) &&
+            query.count(Char::isDigit) >= 3
+        ) {
+            PhoneNumberUtils.normalizeNumber(query).takeIf(String::isNotBlank)?.let { number ->
+                ContactResult(name = number, number = number, label = "call typed number")
+            }
+        } else null
+        // A phone-shaped call query is an explicit direct dial. Do not mix in
+        // contact-provider matches, which could make a nearby contact the
+        // selected row while the user is still entering a number.
+        if (directNumber != null) return listOf(directNumber)
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            return listOfNotNull(directNumber) + messenger
+        }
         val projection = arrayOf(
             ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
             ContactsContract.CommonDataKinds.Phone.NUMBER,
             ContactsContract.CommonDataKinds.Phone.TYPE,
         )
+        val commanderContactsByName = if (includeMessenger) {
+            CommanderMessagingContacts.contacts(activity).associateBy { canonicalPersonName(it.name) }
+        } else emptyMap()
+        val messagingDiscoveries = if (includeMessenger) {
+            CommanderMessagingContacts.discoveries(activity).associateBy { it.identity }
+        } else emptyMap()
         val phoneContacts = activity.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             projection,
@@ -506,11 +550,36 @@ class CommandEngine(private val activity: Activity) {
             buildList {
                 while (cursor.moveToNext() && size < limit) {
                     val type = cursor.getInt(typeColumn)
+                    val phoneBookName = cursor.getString(nameColumn)
+                    val commanderContact = if (includeMessenger) {
+                        commanderContactsByName[canonicalPersonName(phoneBookName)]
+                    } else null
                     add(
                         ContactResult(
-                            name = cursor.getString(nameColumn),
+                            name = commanderContact?.name ?: phoneBookName,
                             number = cursor.getString(numberColumn),
-                            label = ContactsContract.CommonDataKinds.Phone.getTypeLabel(activity.resources, type, "phone").toString().lowercase(),
+                            label = ContactsContract.CommonDataKinds.Phone.getTypeLabel(activity.resources, type, "phone").toString()
+                                .lowercase().let { typeLabel ->
+                                    if (includeMessenger) listOf(
+                                        "SMS",
+                                        phoneBookName,
+                                        typeLabel,
+                                        if (directSmsEnabled()) "direct send" else "open composer",
+                                    ).joinToString(" · ")
+                                    else typeLabel
+                                },
+                            messagingPlatform = if (includeMessenger) "SMS" else null,
+                            messagingPlatformIcon = null,
+                            commanderMessagingContactId = commanderContact?.id,
+                            messagingIsDefault = commanderContact?.defaultIdentity?.let { defaultIdentity ->
+                                val route = messagingDiscoveries[defaultIdentity]
+                                route?.packageName == "sms" || route?.platform.equals("SMS", true) ||
+                                    route?.packageName in buildSet {
+                                        android.provider.Telephony.Sms.getDefaultSmsPackage(activity)?.let(::add)
+                                        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:"))
+                                            .resolveActivity(activity.packageManager)?.packageName?.let(::add)
+                                    }
+                            } == true,
                         ),
                     )
                 }
@@ -518,10 +587,109 @@ class CommandEngine(private val activity: Activity) {
                 contact.name.trim().lowercase() to PhoneNumberUtils.normalizeNumber(contact.number)
             }
         } ?: emptyList()
-        return (messenger + phoneContacts).distinctBy { contact ->
+        val directSmsNames = phoneContacts.mapTo(hashSetOf()) { canonicalPersonName(it.name) }
+        val smsPackages = buildSet {
+            android.provider.Telephony.Sms.getDefaultSmsPackage(activity)?.let(::add)
+            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).resolveActivity(activity.packageManager)?.packageName?.let(::add)
+        }
+        val distinctNotificationRoutes = messenger.filterNot { contact ->
+            canonicalPersonName(contact.name) in directSmsNames && (
+                contact.messagingPlatform.equals("SMS", true) ||
+                    contact.messagingPlatform.equals("Messages", true) ||
+                    contact.messagingPackageName in smsPackages
+                )
+        }
+        return (listOfNotNull(directNumber) + phoneContacts + distinctNotificationRoutes).distinctBy { contact ->
             contact.messengerShortcutId
-                ?: "${contact.name.trim().lowercase()}:${PhoneNumberUtils.normalizeNumber(contact.number)}"
-        }.take(limit)
+                ?: contact.messagingIdentity
+                ?: "${contact.messagingPlatform.orEmpty().lowercase()}:${contact.name.trim().lowercase()}:${PhoneNumberUtils.normalizeNumber(contact.number)}"
+        }.sortedWith(
+            compareBy<ContactResult> { contactNameMatchRank(it.name, query) }
+                .thenBy { it.name.length }
+                .thenBy { it.name.lowercase() }
+                .thenByDescending { it.messagingIsDefault }
+        ).take(limit)
+    }
+
+    private fun contactNameMatchRank(name: String, query: String): Int {
+        val candidate = canonicalPersonName(name)
+        val needle = canonicalPersonName(query)
+        return when {
+            candidate == needle -> 0
+            candidate.startsWith(needle) -> 1
+            candidate.split(' ').any { it.startsWith(needle) } -> 2
+            else -> 3
+        }
+    }
+
+    private fun canonicalPersonName(name: String): String = name
+        .lowercase()
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .trim()
+        .replace(Regex("\\s+"), " ")
+
+    fun recentReplyContacts(limit: Int = Int.MAX_VALUE): List<ContactResult> =
+        HubRepository.items.asSequence()
+            .filter { !it.isSummary && it.replyAction != null }
+            .distinctBy { it.key }
+            .sortedByDescending { it.time }
+            .map { item ->
+                ContactResult(
+                    name = item.conversationTitle?.takeIf(String::isNotBlank) ?: item.title,
+                    number = "",
+                    label = listOf(item.appName, "reply available", item.text.take(48).takeIf(String::isNotBlank))
+                        .filterNotNull()
+                        .joinToString(" · "),
+                    avatar = item.displayImage,
+                    hubNotificationKey = item.key,
+                    messagingIdentity = CommanderMessagingContacts.identity(
+                        item.packageName,
+                        item.shortcutId,
+                        item.conversationTitle ?: item.title,
+                    ),
+                    messagingPlatform = item.appName,
+                    messagingPackageName = item.packageName,
+                    messagingPlatformIcon = CommanderMessagingContacts.loadCachedPlatformIcon(activity, item.packageName),
+                )
+            }
+            .take(limit)
+            .toList()
+
+    fun replyToRecentMessage(notificationKey: String, body: String): String? {
+        val item = HubRepository.items.firstOrNull {
+            it.key == notificationKey || notificationKey in it.sourceKeys
+        } ?: return "Message is no longer available"
+        return if (item.sendReply(activity, body)) null else "Message could not be sent"
+    }
+
+    fun sendCommanderMessage(contact: ContactResult, body: String): CommanderMessageDelivery {
+        if (body.isBlank()) return CommanderMessageDelivery("Type a message first", status = "message not sent")
+        val contactId = contact.commanderMessagingContactId
+            ?: return CommanderMessageDelivery("Commander contact is unavailable", status = "message not sent")
+        val (route, liveReply) = CommanderMessagingContacts.bestRoute(activity, contactId, contact.messagingIdentity)
+        if (liveReply != null) {
+            val accepted = liveReply.sendReply(activity, body)
+            return if (accepted) CommanderMessageDelivery(sent = true, status = "message sent")
+            else CommanderMessageDelivery("Message could not be sent", status = "message not sent")
+        }
+        CommanderMessagingContacts.retainedReply(activity, contactId)?.let { (identity, reply) ->
+            val accepted = reply.sendReply(activity, "retained::$identity", route?.packageName.orEmpty(), body)
+            if (accepted) return CommanderMessageDelivery(sent = true, status = "message sent")
+            CommanderMessagingContacts.forgetRetainedReply(identity)
+        }
+        if (route?.packageName == "com.facebook.orca" && route.shortcutId != null) {
+            val error = MessengerChatStore.openDraft(
+                activity,
+                ContactResult(route.title, "", "Messenger", messengerShortcutId = route.shortcutId),
+                body,
+            )
+            return if (error == null) CommanderMessageDelivery(status = "message ready · confirm in Messenger")
+            else CommanderMessageDelivery(error, status = "message not sent")
+        }
+        return CommanderMessageDelivery(
+            "${route?.platform ?: "This conversation"} needs a new replyable notification",
+            status = "waiting for notification",
+        )
     }
 
     fun messageContact(contact: ContactResult, body: String = ""): String? {
@@ -534,6 +702,12 @@ class CommandEngine(private val activity: Activity) {
     suspend fun sendMessageContact(contact: ContactResult, body: String): String? {
         if (contact.messengerShortcutId != null) {
             if (body.isBlank()) return "Type a message first"
+            val liveReply = HubRepository.items.firstOrNull {
+                it.shortcutId == contact.messengerShortcutId && it.replyAction != null
+            }
+            if (liveReply != null) {
+                return if (liveReply.sendReply(activity, body)) null else "Message could not be sent"
+            }
             return MessengerChatStore.openDraft(activity, contact, body)
         }
         if (!SmsSettings.directEnabled(activity)) return messageContact(contact, body)
@@ -611,8 +785,23 @@ class CommandEngine(private val activity: Activity) {
 
     private fun setTimer(text: String): String? {
         if (text.isBlank()) return "Type a duration after +"
+        parseAlarmTime(text)?.let { alarm ->
+            val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                putExtra(AlarmClock.EXTRA_HOUR, alarm.hour24)
+                putExtra(AlarmClock.EXTRA_MINUTES, alarm.minute)
+                putExtra(AlarmClock.EXTRA_MESSAGE, "Command alarm")
+                putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            }
+            if (intent.resolveActivity(packageManager) == null) return "No alarm app is installed"
+            return runCatching {
+                activity.startActivity(intent)
+                null
+            }.getOrElse { error ->
+                if (error is SecurityException) "Permission denied by the alarm app" else "Alarm could not be set"
+            }
+        }
         val match = Regex("(?i)\\b(\\d+(?:\\.\\d+)?)\\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\\b").find(text)
-            ?: return "Try +10 minutes tea"
+            ?: return "Try +10 minutes tea or +6:30am"
         val amount = match.groupValues[1].toDoubleOrNull() ?: return "Invalid timer duration"
         val unit = match.groupValues[2].lowercase()
         val multiplier = when {
@@ -636,6 +825,45 @@ class CommandEngine(private val activity: Activity) {
         }.getOrElse { error ->
             if (error is SecurityException) "Permission denied by the timer app" else "Timer could not be started"
         }
+    }
+
+    fun alarmTimeLabel(text: String): String? = parseAlarmTime(text)?.label
+
+    fun timerInputPreview(text: String): String? = alarmTimeLabel(text)?.let { "alarm · $it" }
+        ?: timerDurationSeconds(text)?.let { seconds ->
+            val hours = seconds / 3600
+            val minutes = (seconds % 3600) / 60
+            val remainder = seconds % 60
+            "timer · ${if (hours > 0) "%02d:%02d:%02d".format(hours, minutes, remainder) else "%02d:%02d".format(minutes, remainder)}"
+        }
+
+    private fun timerDurationSeconds(text: String): Long? {
+        val match = Regex("(?i)\\b(\\d+(?:\\.\\d+)?)\\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\\b").find(text)
+            ?: return null
+        val amount = match.groupValues[1].toDoubleOrNull() ?: return null
+        return when {
+            match.groupValues[2].startsWith("h", true) -> (amount * 3600).toLong()
+            match.groupValues[2].startsWith("m", true) -> (amount * 60).toLong()
+            else -> amount.toLong()
+        }.coerceAtLeast(1)
+    }
+
+    private data class AlarmTime(val hour24: Int, val minute: Int, val label: String)
+
+    private fun parseAlarmTime(text: String): AlarmTime? {
+        val match = Regex("(?i)^\\s*(\\d{1,2})(?::?(\\d{2}))?\\s*([ap])\\.?m\\.?\\s*$").matchEntire(text)
+            ?: return null
+        val hour12 = match.groupValues[1].toIntOrNull()?.takeIf { it in 1..12 } ?: return null
+        val minute = match.groupValues[2].takeIf(String::isNotBlank)?.toIntOrNull() ?: 0
+        if (minute !in 0..59) return null
+        val afternoon = match.groupValues[3].equals("p", ignoreCase = true)
+        val hour24 = when {
+            afternoon && hour12 != 12 -> hour12 + 12
+            !afternoon && hour12 == 12 -> 0
+            else -> hour12
+        }
+        val suffix = if (afternoon) "PM" else "AM"
+        return AlarmTime(hour24, minute, "%d:%02d %s".format(hour12, minute, suffix))
     }
 
     private fun calculate(text: String): String? {
@@ -687,8 +915,7 @@ class CommandEngine(private val activity: Activity) {
         if (direct) return startOrFallback(intent, null, "ChatGPT is not installed")
         if (intent.resolveActivity(packageManager) == null) return "ChatGPT is not installed"
         return runCatching {
-            activity.startActivity(intent)
-            activity.finish()
+            startActivityAndFinish(intent)
             null
         }.getOrElse { "Could not open ChatGPT" }
     }
@@ -705,15 +932,16 @@ class CommandEngine(private val activity: Activity) {
             INTERNAL_HOME -> internalDestination(MainActivity::class.java)
             INTERNAL_SETTINGS -> internalDestination(SettingsActivity::class.java)
             INTERNAL_SWITCHER -> return "Open App Switcher from Commander"
+            INTERNAL_KEY_CONTROL -> internalDestination(KeyControlActivity::class.java)
+            INTERNAL_QUICK_CONTROLS, INTERNAL_APP_SHORTCUTS -> return "Open this category from Commander"
             else -> if (app.packageName.startsWith(INTERNAL_WEB)) {
                 return searchWeb(Uri.decode(app.packageName.removePrefix(INTERNAL_WEB)))
             } else packageManager.getLaunchIntentForPackage(app.packageName) ?: return "App cannot be opened"
         }
-        activity.startActivity(intent)
+        startActivityAndFinish(intent)
         if (!app.packageName.startsWith("internal:")) {
             AppLaunchHistory.record(activity.applicationContext, app.packageName)
         }
-        activity.finish()
         return null
     }
 
@@ -730,7 +958,10 @@ class CommandEngine(private val activity: Activity) {
         const val INTERNAL_ALL_APPS = "internal:all-apps"
         const val INTERNAL_RECENT_APPS = "internal:recent-apps"
         const val INTERNAL_SWITCHER = "internal:switcher"
+        const val INTERNAL_KEY_CONTROL = "internal:key-control"
         const val INTERNAL_TASKS = "internal:todoist-tasks"
+        const val INTERNAL_QUICK_CONTROLS = "internal:quick-controls"
+        const val INTERNAL_APP_SHORTCUTS = "internal:app-shortcuts"
     }
 
     private fun shareToPackage(text: String, packageName: String, label: String): String? {
@@ -811,12 +1042,19 @@ class CommandEngine(private val activity: Activity) {
         val chosen = if (primary.resolveActivity(packageManager) != null) primary else fallback
         if (chosen == null || chosen.resolveActivity(packageManager) == null) return unavailable
         return runCatching {
-            activity.startActivity(chosen)
-            activity.finish()
+            startActivityAndFinish(chosen)
             null
         }.getOrElse { error ->
             if (error is SecurityException) "Permission denied by the target app" else unavailable
         }
+    }
+
+    private fun startActivityAndFinish(intent: Intent) {
+        val launchOptions = ActivityOptions.makeCustomAnimation(activity, 0, 0).toBundle()
+        activity.startActivity(intent, launchOptions)
+        activity.finish()
+        @Suppress("DEPRECATION")
+        activity.overridePendingTransition(0, 0)
     }
 }
 
