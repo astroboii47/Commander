@@ -2,14 +2,26 @@
 <resources>
     <style name="Theme.MinimalCommand" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowDisablePreview">false</item>
+    </style>
+    <style name="Theme.MinimalCommand.Launcher" parent="Theme.MinimalCommand">
+        <!-- Keep Android's last complete launcher frame available while HOME
+             transitions back from an app. Disabling this preview exposed the
+             outgoing app before the wallpaper layer was composed. -->
+        <item name="android:windowDisablePreview">false</item>
     </style>
     <style name="Theme.MinimalCommand.Overlay" parent="android:style/Theme.Material.Light.NoActionBar">
+        <!-- Bar has its own short Compose entrance. Avoid a second full-screen
+             task animation delaying window focus and keyboard startup. -->
+        <item name="android:windowAnimationStyle">@style/CommanderOverlayAnimation</item>
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
@@ -21,14 +33,26 @@
         <item name="android:backgroundDimEnabled">true</item>
         <item name="android:windowIsFloating">false</item>
     </style>
+    <style name="CommanderOverlayAnimation">
+        <item name="android:activityOpenEnterAnimation">@null</item>
+        <item name="android:activityOpenExitAnimation">@null</item>
+        <item name="android:activityCloseEnterAnimation">@null</item>
+        <item name="android:activityCloseExitAnimation">@null</item>
+        <item name="android:taskOpenEnterAnimation">@null</item>
+        <item name="android:taskOpenExitAnimation">@null</item>
+        <item name="android:taskCloseEnterAnimation">@null</item>
+        <item name="android:taskCloseExitAnimation">@null</item>
+    </style>
     <style name="Theme.MinimalCommand.Hub" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#E8E6DF</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#E8E6DF</item>
-        <item name="android:navigationBarColor">#E8E6DF</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
         <item name="android:windowDisablePreview">false</item>
     </style>
 </resources>

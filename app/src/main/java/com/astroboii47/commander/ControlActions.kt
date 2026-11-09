@@ -11,6 +11,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import android.view.KeyEvent
 import androidx.core.app.ActivityCompat
@@ -19,7 +20,7 @@ import androidx.core.content.ContextCompat
 enum class ControlKind {
     Flashlight, Rotation, Brightness, Volume, AudioOutput, BluetoothDevices, Play, Pause, Next,
     RingerMode, Theme, BatteryProtection, Caffeine, ScreenDimmer, QrScanner, ScreenRecord, MiniMode, ScrollAssistant,
-    SplitScreen,
+    SplitScreen, SplitPair, SplitRecent, CircleToSearch,
 }
 
 data class ControlResult(
@@ -34,6 +35,8 @@ data class ControlResult(
 object ControlActions {
     private const val CONTROL_STATE_PREFS = "quick_control_state"
     private const val KEY_BATTERY_PROTECTION_ENABLED = "battery_protection_enabled"
+    private val isTitanDevice: Boolean
+        get() = Build.MODEL.contains("Titan", ignoreCase = true)
 
     /**
      * A mixed-in Quick Control must be executable without first entering the
@@ -82,7 +85,8 @@ object ControlActions {
         ControlKind.Next -> "skipped"
         ControlKind.QrScanner -> "opened"
         ControlKind.ScreenRecord -> "opened"
-        ControlKind.SplitScreen -> "opened"
+        ControlKind.SplitScreen, ControlKind.SplitPair, ControlKind.SplitRecent -> "opened"
+        ControlKind.CircleToSearch -> "opened"
         ControlKind.Caffeine, ControlKind.ScreenDimmer,
         ControlKind.MiniMode, ControlKind.ScrollAssistant -> "toggled"
     }
@@ -134,11 +138,14 @@ object ControlActions {
             ControlResult(ControlKind.Caffeine, "Caffeine", "toggle keep-screen-awake"),
             ControlResult(ControlKind.ScreenDimmer, "Screen dimmer", "toggle Screen Filter"),
             ControlResult(ControlKind.QrScanner, "QR scanner", "scan a QR code"),
-            ControlResult(ControlKind.ScreenRecord, "Screen recording", "open the system recorder"),
-            ControlResult(ControlKind.SplitScreen, "Split screen", "split the active app"),
+            ControlResult(ControlKind.CircleToSearch, "Circle to Search", "search anything on screen"),
+            ControlResult(ControlKind.ScreenRecord, "Screen recording", if (isTitanDevice) "open the system recorder" else "open Quick Settings to record"),
+            ControlResult(ControlKind.SplitScreen, "Split active app", "choose the second app"),
+            ControlResult(ControlKind.SplitPair, "Split two apps", "choose top and bottom apps"),
+            ControlResult(ControlKind.SplitRecent, "Split with recent app", "open the recent-app split picker"),
             ControlResult(ControlKind.MiniMode, "Mini mode", "toggle Titan mini mode"),
             ControlResult(ControlKind.ScrollAssistant, "Scroll Assistant", "toggle Titan touchpad scrolling"),
-        )
+        ).filter { isTitanDevice || it.kind !in setOf(ControlKind.MiniMode, ControlKind.ScrollAssistant) }
         if (normalized.isBlank()) return all
         val term = normalized
             .replace(Regex("\\b(100|[1-9]?\\d)\\b"), "")
@@ -167,8 +174,12 @@ object ControlActions {
                 ControlKind.Caffeine -> term in listOf("caffeine", "cafe", "awake") || "caffeine".startsWith(term)
                 ControlKind.ScreenDimmer -> term in listOf("screen dimmer", "dimmer", "screen filter", "filter") || "screen dimmer".startsWith(term)
                 ControlKind.QrScanner -> term in listOf("qr", "qr scanner", "scanner") || "qr scanner".startsWith(term)
+                ControlKind.CircleToSearch -> term in listOf("circle to search", "circle search", "cts", "search screen") ||
+                    "circle to search".startsWith(term)
                 ControlKind.ScreenRecord -> term in listOf("record", "screen record", "screen recording") || "screen recording".startsWith(term)
-                ControlKind.SplitScreen -> term in listOf("split", "split screen", "multitask") || "split screen".startsWith(term)
+                ControlKind.SplitScreen -> term in listOf("split", "split screen", "split active", "multitask") || "split active app".startsWith(term)
+                ControlKind.SplitPair -> term in listOf("split", "split two", "split pair", "multitask") || "split two apps".startsWith(term)
+                ControlKind.SplitRecent -> term in listOf("split", "split recent", "multitask") || "split with recent app".startsWith(term)
                 ControlKind.MiniMode -> term in listOf("mini", "mini mode") || "mini mode".startsWith(term)
                 ControlKind.ScrollAssistant -> term in listOf("scroll", "scroll assistant", "touchpad scroll") || "scroll assistant".startsWith(term)
                 else -> it.label.lowercase().startsWith(term)
@@ -227,8 +238,22 @@ object ControlActions {
             "Screen Filter is not installed",
         )
         ControlKind.QrScanner -> launchQrScanner(activity)
+        ControlKind.CircleToSearch -> if (CircleToSearchLauncher.trigger()) null else
+            "Circle to Search unavailable. Set Google as your default assistant and enable Circle to Search."
         ControlKind.ScreenRecord -> launchScreenRecorder(activity)
-        ControlKind.SplitScreen -> {
+        ControlKind.SplitPair -> "Choose two apps from Commander Bar"
+        ControlKind.SplitScreen, ControlKind.SplitRecent -> {
+            if (!isTitanDevice && HomeTypingAccessibilityService.splitWithSystemAction()) {
+                activity.finish()
+                return null
+            }
+            if (!isTitanDevice) {
+                if (!HomeTypingAccessibilityService.splitWithNothingRecents()) {
+                    return "Enable Commander accessibility to open Recents for split screen"
+                }
+                activity.finish()
+                return null
+            }
             val target = TaskSwitcherShell.underlyingSplitTarget(activity).getOrElse {
                 return it.message ?: "Split screen unavailable"
             }
@@ -239,8 +264,9 @@ object ControlActions {
                 null
             }
         }
-        ControlKind.MiniMode -> ShizukuBridge.run(arrayOf("service", "call", "AService", "5"))
-        ControlKind.ScrollAssistant -> ShizukuBridge.run(
+        ControlKind.MiniMode -> if (!isTitanDevice) "Mini mode is only available on Titan" else
+            ShizukuBridge.run(arrayOf("service", "call", "AService", "5"))
+        ControlKind.ScrollAssistant -> if (!isTitanDevice) "Scroll Assistant is only available on Titan" else ShizukuBridge.run(
             arrayOf(
                 "sh", "-c",
                 "v=\$(getprop persist.sys.scroll_assistant); if [ \"\$v\" = 1 ]; then n=0; else n=1; fi; service call AService 2 s16 persist.sys.scroll_assistant s16 \"\$n\"",
@@ -398,6 +424,13 @@ object ControlActions {
     }.getOrElse { "QR scanner unavailable" }
 
     private fun launchScreenRecorder(activity: Activity): String? = runCatching {
+        if (!isTitanDevice) {
+            if (!HomeTypingAccessibilityService.openQuickSettings()) {
+                return "Open Quick Settings and tap Screen Record (Commander accessibility is off)"
+            }
+            activity.finish()
+            return null
+        }
         val intent = Intent("com.android.systemui.action.TAKE_SCREEN_RECORD").setComponent(
             ComponentName("com.android.systemui", "com.agui.systemui.qs.screenrecord.TakeScreenRecordService"),
         )

@@ -1,7 +1,10 @@
 package com.astroboii47.commander
 
+import java.util.Locale
+
 import android.content.Intent
 import android.content.ComponentName
+import android.app.role.RoleManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Base64
@@ -57,6 +60,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.SettingsSuggest
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Notifications
@@ -80,6 +84,101 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+@Composable
+private fun ImportantSourcesSettings(activity: SettingsActivity, accent: Color) {
+    Text("Important sources", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+    Text(
+        "People, conversations, alert types and apps that automatically enter Important.",
+        color = Color(0xFF99958E),
+        fontSize = 12.sp,
+    )
+    Spacer(Modifier.height(8.dp))
+    val importantRules = HubImportantSettings.rules.value
+    if (importantRules.isEmpty()) {
+        Text("No automatic importance rules", color = Color(0xFF77736D), fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
+    } else {
+        importantRules.forEach { rule ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .clickable { HubImportantSettings.remove(activity, rule.id) }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (rule.kind == "type") "${rule.appName} alert type" else rule.label,
+                        color = Color(0xFFF4F1E9),
+                        fontSize = 14.sp,
+                    )
+                    Text("${rule.kind} · ${rule.appName}", color = Color(0xFF99958E), fontSize = 11.sp)
+                }
+                Text("remove", color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HubTabsSettings(activity: SettingsActivity, accent: Color) {
+    val modes = HubSettings.tabVisibility.value
+    Text("Hub tabs", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+    Text(
+        "Tap a tab to cycle between auto, always and hidden. All and Important are always shown.",
+        color = Color(0xFF99958E),
+        fontSize = 12.sp,
+    )
+    Spacer(Modifier.height(10.dp))
+    listOf(
+        "messages" to "Messages",
+        "calls" to "Calls",
+        "email" to "Email",
+        "finance" to "Finance",
+        "tasks" to "Tasks",
+        "apps" to "Apps",
+        "flagged" to "Flagged",
+        "summaries" to "Summaries",
+    ).forEach { (id, label) ->
+        val mode = modes[id] ?: HubTabVisibility.Auto
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                .clickable { HubSettings.saveTabVisibility(activity, id, mode.next()) }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, color = Color(0xFFF4F1E9), fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text(
+                mode.label,
+                color = if (mode == HubTabVisibility.Hidden) Color(0xFF77736D) else accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+    Text("Hidden summaries remain in Android's notification shade.", color = Color(0xFF99958E), fontSize = 11.sp)
+}
+
+@Composable
+private fun HubAppNameColourSetting(activity: SettingsActivity, accent: Color) {
+    val enabled = HubSettings.appNameIconColor.value
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Colour Hub app names", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Match each app name to a readable colour sampled from its icon", color = Color(0xFF99958E), fontSize = 12.sp)
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = { HubSettings.saveAppNameIconColor(activity, it) },
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+        )
+    }
+}
 
 class SettingsActivity : ComponentActivity() {
     internal var setupRevision by mutableIntStateOf(0)
@@ -109,6 +208,13 @@ class SettingsActivity : ComponentActivity() {
                 recreate()
             }
             .onFailure { Toast.makeText(this, it.message ?: "Settings import failed", Toast.LENGTH_LONG).show() }
+    }
+    private val homeWallpaperPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            HomeSettings.saveCustomWallpaper(this, uri)
+            recreate()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -166,6 +272,21 @@ class SettingsActivity : ComponentActivity() {
         settingsImporter.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
     }
 
+    fun pickHomeWallpaper() {
+        homeWallpaperPicker.launch(arrayOf("image/*"))
+    }
+
+    fun requestAssistantRole() {
+        val roles = getSystemService(RoleManager::class.java)
+        val intent = if (roles?.isRoleAvailable(RoleManager.ROLE_ASSISTANT) == true) {
+            roles.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT)
+        } else {
+            Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+        }
+        runCatching { startActivity(intent) }
+            .onFailure { Toast.makeText(this, "Could not open Android assistant settings", Toast.LENGTH_SHORT).show() }
+    }
+
     @Suppress("DEPRECATION")
     private fun extractTaskerIcon(data: Intent): String? {
         val direct = data.getParcelableExtra<Bitmap>(Intent.EXTRA_SHORTCUT_ICON)
@@ -206,6 +327,7 @@ private data class SettingsAnchors(
     val ai: BringIntoViewRequester,
     val messages: BringIntoViewRequester,
     val hub: BringIntoViewRequester,
+    val home: BringIntoViewRequester,
     val tasks: BringIntoViewRequester,
     val appearance: BringIntoViewRequester,
     val files: BringIntoViewRequester,
@@ -274,6 +396,55 @@ private fun CommanderSetup(activity: SettingsActivity, accent: Color) {
 }
 
 @Composable
+private fun AssistantGestureSetting(activity: SettingsActivity, accent: Color) {
+    @Suppress("UNUSED_VARIABLE") val refreshWhenReturning = activity.setupRevision
+    val assistantRole = activity.getSystemService(RoleManager::class.java)
+    val commanderIsAssistant = assistantRole?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp))
+            .clickable { activity.requestAssistantRole() }
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Search, null, tint = accent, modifier = Modifier.size(21.dp))
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text("Use Commander as digital assistant", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (commanderIsAssistant) "Selected in Android · assistant gestures open Commander Bar"
+                else "Choose Commander in Android's assistant picker",
+                color = Color(0xFF99958E), fontSize = 11.sp,
+            )
+        }
+        Text(if (commanderIsAssistant) "selected" else "choose →", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+    Text(
+        "If holding the navigation bar still opens Circle to Search, turn that gesture off in Android's Circle to Search settings. Some phones keep it separate from the assistant gesture.",
+        color = Color(0xFF99958E), fontSize = 11.sp, modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 14.dp),
+    )
+    AssistantPowerRouteSettings(activity, accent)
+    NavigationHoldGestureSetting(activity, accent)
+}
+
+@Composable
+private fun CommandBarMessageGlyphSetting(
+    enabled: Boolean,
+    accent: Color,
+    onEnabledChange: (Boolean) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Messaging app glyphs", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Show messaging app glyphs in Commander Bar message rows", color = Color(0xFF99958E), fontSize = 12.sp)
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+        )
+    }
+}
+
+@Composable
 private fun SettingsNavigation(activity: SettingsActivity, accent: Color, anchors: SettingsAnchors) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -281,6 +452,7 @@ private fun SettingsNavigation(activity: SettingsActivity, accent: Color, anchor
         SettingsDestination("Setup", "permissions accessibility app info restricted settings notification access contacts files", Icons.Outlined.SettingsSuggest, anchors.setup),
         SettingsDestination("Commander Contacts", "people messages sms whatsapp messenger telegram contacts", Icons.Outlined.Contacts, anchors.messages),
         SettingsDestination("Hub & command bar", "hub history notifications tabs keyboard navigation", Icons.Outlined.Dashboard, anchors.hub),
+        SettingsDestination("Home", "homescreen wallpaper darkness blur timeline cards glow", Icons.Outlined.Home, anchors.home),
         SettingsDestination("Appearance", "theme colour glow blur sound day night background", Icons.Outlined.Palette, anchors.appearance),
         SettingsDestination("Shortcuts", "hardware key control tasker automations home typing", Icons.Outlined.Keyboard, anchors.shortcuts),
         SettingsDestination("Tasks", "todoist task quick add", Icons.Outlined.CheckCircleOutline, anchors.tasks),
@@ -289,14 +461,21 @@ private fun SettingsNavigation(activity: SettingsActivity, accent: Color, anchor
         SettingsDestination("App search", "apps terms icons shortcuts controls", Icons.Outlined.Apps, anchors.apps),
         SettingsDestination("Ask Gemini", "ai gemini api key chatgpt", Icons.Outlined.AutoAwesome, anchors.ai),
         SettingsDestination("Backup & restore", "export import backup settings", Icons.Outlined.Backup, anchors.backup),
-    ).filter { query.isBlank() || "${it.label} ${it.terms}".contains(query.trim(), ignoreCase = true) }
+    ).filter { destination ->
+        (destination.label != "Home" || ModuleSettings.homeEnabled.value) &&
+            (destination.label != "Hub & command bar" || ModuleSettings.hubEnabled.value) &&
+            (query.isBlank() || "${destination.label} ${destination.terms}".contains(query.trim(), ignoreCase = true))
+    }
     Text("commander settings", color = Color(0xFFF4F1E9), fontSize = 30.sp, fontWeight = FontWeight.Bold)
     Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-        Text("open home →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
+        if (ModuleSettings.homeEnabled.value) Text("open home →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
             activity.startActivity(Intent(activity, MainActivity::class.java))
         })
-        Text("open hub →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
+        if (ModuleSettings.hubEnabled.value) Text("open hub →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
             activity.startActivity(Intent(activity, HubActivity::class.java))
+        })
+        Text("open bar →", color = accent, fontSize = 13.sp, modifier = Modifier.clickable {
+            activity.startActivity(Intent(activity, OverlayActivity::class.java))
         })
     }
     Spacer(Modifier.height(16.dp))
@@ -379,6 +558,427 @@ private fun HubHistorySettings(
 }
 
 @Composable
+private fun HomeAppearanceSettings(activity: SettingsActivity, accent: Color, anchor: BringIntoViewRequester) {
+    val scope = rememberCoroutineScope()
+    var mode by remember { mutableStateOf(HomeSettings.wallpaperMode.value) }
+    var darkness by remember { mutableStateOf(HomeSettings.wallpaperDarkness.floatValue) }
+    var blur by remember { mutableStateOf(HomeSettings.wallpaperBlur.floatValue) }
+    var timelineGlow by remember { mutableStateOf(HomeSettings.timelineGlow.floatValue) }
+    var cardGlow by remember { mutableStateOf(HomeSettings.cardGlow.floatValue) }
+    var showRemaining by remember { mutableStateOf(HomeSettings.showRemaining.value) }
+    var wallpaperAccent by remember { mutableStateOf(HomeSettings.wallpaperAccent.value) }
+    var wallpaperPanX by remember { mutableStateOf(HomeSettings.wallpaperPanX.floatValue) }
+    var wallpaperPanY by remember { mutableStateOf(HomeSettings.wallpaperPanY.floatValue) }
+    var wallpaperZoom by remember { mutableStateOf(HomeSettings.wallpaperZoom.floatValue) }
+    var timeline12Hour by remember { mutableStateOf(HomeSettings.timeline12Hour.value) }
+    var timelineHourlyLabels by remember { mutableStateOf(HomeSettings.timelineHourlyLabels.value) }
+    var glyphStyle by remember { mutableStateOf(HomeSettings.glyphStyle.value) }
+    var fontStyle by remember { mutableStateOf(HomeSettings.fontStyle.value) }
+    var weatherLocation by remember { mutableStateOf(WeatherPreferences.location(activity).name) }
+    var weatherQuery by remember { mutableStateOf(weatherLocation) }
+    var weatherStatus by remember { mutableStateOf("") }
+    var carouselView by remember { mutableStateOf(HomeSettings.carouselView.value) }
+    var carouselPitch by remember { mutableStateOf(HomeSettings.carouselPitch.floatValue) }
+    var carouselRearOpacity by remember { mutableStateOf(HomeSettings.carouselRearOpacity.floatValue) }
+
+    fun persist() = HomeSettings.save(activity, mode, darkness, blur, timelineGlow, cardGlow, showRemaining)
+
+    SettingsSectionHeader("home", Icons.Outlined.Home, accent, Modifier.bringIntoViewRequester(anchor))
+    Spacer(Modifier.height(12.dp))
+    Text("Wallpaper", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+    Text("Wallpaper remains visible beneath lightweight glass surfaces", color = Color(0xFF99958E), fontSize = 12.sp)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "set Commander as default home →",
+        color = accent,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.clickable {
+            activity.startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+        }.padding(vertical = 7.dp),
+    )
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        HomeWallpaperMode.entries.forEach { choice ->
+            val selected = mode == choice
+            Text(
+                choice.label,
+                color = if (selected) Color.White else Color(0xFFAAA7A0),
+                fontSize = 12.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(11.dp))
+                    .background(if (selected) accent else Color(0xFF111111))
+                    .clickable {
+                        if (choice == HomeWallpaperMode.Custom && HomeSettings.customWallpaperUri.value == null) activity.pickHomeWallpaper()
+                        else { mode = choice; persist() }
+                    }.padding(vertical = 11.dp),
+            )
+        }
+    }
+    Spacer(Modifier.height(9.dp))
+    Text(
+        if (HomeSettings.customWallpaperUri.value == null) "choose custom wallpaper" else "change custom wallpaper",
+        color = accent,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.clickable { activity.pickHomeWallpaper() }.padding(vertical = 7.dp),
+    )
+    if (HomeSettings.customWallpaperUri.value != null) {
+        Text("Wallpaper zoom  ${String.format(Locale.getDefault(), "%.1f", wallpaperZoom)}×", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+        Slider(value = wallpaperZoom, onValueChange = { wallpaperZoom = it; HomeSettings.saveWallpaperPosition(activity, wallpaperPanX, wallpaperPanY, wallpaperZoom) }, valueRange = 1f..3f)
+        Text("Horizontal position", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+        Slider(value = wallpaperPanX, onValueChange = { wallpaperPanX = it; HomeSettings.saveWallpaperPosition(activity, wallpaperPanX, wallpaperPanY, wallpaperZoom) }, valueRange = -1f..1f)
+        Text("Vertical position", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+        Slider(value = wallpaperPanY, onValueChange = { wallpaperPanY = it; HomeSettings.saveWallpaperPosition(activity, wallpaperPanX, wallpaperPanY, wallpaperZoom) }, valueRange = -1f..1f)
+        Text(
+            "set this crop as Android Home wallpaper →",
+            color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clickable {
+                Toast.makeText(activity, if (HomeSettings.applyCustomToSystemHome(activity)) "Android Home wallpaper updated" else "Could not set Android wallpaper", Toast.LENGTH_SHORT).show()
+            }.padding(vertical = 7.dp),
+        )
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Use wallpaper accent", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Automatically colour Commander from the selected wallpaper", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(
+            checked = wallpaperAccent,
+            onCheckedChange = {
+                wallpaperAccent = it
+                HomeSettings.setWallpaperAccent(activity, it)
+            },
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentSettings.color.value),
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+    Text("Wallpaper darkness  ${(darkness * 100).toInt()}%", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+    Slider(value = darkness, onValueChange = { darkness = it; persist() }, valueRange = .15f..0.85f)
+    Text("Wallpaper blur  ${blur.toInt()}", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+    Slider(value = blur, onValueChange = { blur = it; persist() }, valueRange = 0f..12f)
+    Spacer(Modifier.height(14.dp))
+    Text("Weather location", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+    Text("Open-Meteo · no API key required · currently $weatherLocation", color = Color(0xFF99958E), fontSize = 11.sp)
+    Spacer(Modifier.height(7.dp))
+    BasicTextField(
+        value = weatherQuery,
+        onValueChange = { weatherQuery = it },
+        singleLine = true,
+        textStyle = TextStyle(color = Color(0xFFF4F1E9), fontSize = 14.sp),
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF111111)).padding(horizontal = 12.dp, vertical = 11.dp),
+    )
+    Text(
+        if (weatherStatus.isBlank()) "set weather location →" else weatherStatus,
+        color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier.clickable(enabled = weatherQuery.isNotBlank()) {
+            weatherStatus = "finding location…"
+            scope.launch {
+                val result = withContext(Dispatchers.IO) { WeatherPreferences.resolveAndSave(activity, weatherQuery) }
+                if (result == null) weatherStatus = "location not found"
+                else {
+                    weatherLocation = result.name
+                    weatherQuery = result.name
+                    weatherStatus = "saved · refreshes on Home"
+                }
+            }
+        }.padding(vertical = 10.dp),
+    )
+    Spacer(Modifier.height(8.dp))
+    Text("Home typography", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+    Text("Ryoku uses Space Grotesk for UI, Fraunces for display, and mono faces for labels.", color = Color(0xFF99958E), fontSize = 11.sp)
+    Spacer(Modifier.height(7.dp))
+    HomeFontStyle.entries.forEach { choice ->
+        val selected = fontStyle == choice
+        Text(
+            choice.label,
+            color = if (selected) Color.White else Color(0xFFAAA7A0),
+            fontSize = 13.sp,
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                .background(if (selected) accent.copy(alpha = .72f) else Color(0xFF111111))
+                .clickable {
+                    fontStyle = choice
+                    HomeSettings.setFontStyle(activity, choice)
+                }.padding(horizontal = 12.dp, vertical = 10.dp),
+        )
+        Spacer(Modifier.height(5.dp))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Bold card titles", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Use the selected font's heavier weight for card names only", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(
+            checked = HomeSettings.boldCardTitles.value,
+            onCheckedChange = { HomeSettings.setBoldCardTitles(activity, it) },
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+        )
+    }
+    Text("Timeline glow  ${(timelineGlow * 100).toInt()}%", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+    Slider(value = timelineGlow, onValueChange = { timelineGlow = it; persist() }, valueRange = .45f..1.65f)
+    Text("Card glow  ${(cardGlow * 100).toInt()}%", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+    Slider(value = cardGlow, onValueChange = { cardGlow = it; persist() }, valueRange = .45f..1.65f)
+    Text("Carousel view", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text(carouselView.description, color = Color(0xFF99958E), fontSize = 11.sp)
+    Spacer(Modifier.height(7.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CarouselViewMode.entries.forEach { choice ->
+            val selected = carouselView == choice
+            Text(
+                choice.label,
+                color = if (selected) Color.White else Color(0xFFAAA7A0),
+                fontSize = 11.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                    .background(if (selected) accent else Color(0xFF111111))
+                    .clickable {
+                        carouselView = choice
+                        HomeSettings.setCarouselView(activity, choice)
+                    }
+                    .padding(vertical = 10.dp),
+            )
+        }
+    }
+    if (carouselView == CarouselViewMode.Elevated) {
+        Spacer(Modifier.height(9.dp))
+        Text("Elevated pitch  ${String.format(Locale.getDefault(), "%.1f", carouselPitch)}°", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+        Slider(
+            value = carouselPitch,
+            onValueChange = { carouselPitch = it; HomeSettings.setCarouselPitch(activity, it) },
+            valueRange = 5f..11f,
+        )
+    }
+    Spacer(Modifier.height(4.dp))
+    Text("Rear card opacity  ${(carouselRearOpacity * 100).toInt()}%", color = Color(0xFFF4F1E9), fontSize = 13.sp)
+    Text("Focused cards remain at full opacity", color = Color(0xFF99958E), fontSize = 11.sp)
+    Slider(
+        value = carouselRearOpacity,
+        onValueChange = {
+            carouselRearOpacity = it
+            HomeSettings.setCarouselRearOpacity(activity, it)
+        },
+        valueRange = .30f..1f,
+    )
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Floating animation", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Keep the ring subtly alive while idle", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = HomeSettings.carouselFloating.value, onCheckedChange = { HomeSettings.setCarouselFloating(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Auto-rotate cards", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Move to the next card every 5 seconds", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = HomeSettings.carouselAutoRotate.value, onCheckedChange = { HomeSettings.setCarouselAutoRotate(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Upcoming timeline labels", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Show upcoming markers and times beneath Now", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = HomeSettings.timelineUpcomingLabels.value, onCheckedChange = { HomeSettings.setTimelineUpcomingLabels(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Dot-matrix Tasks count", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Turn off to use the Tasks icon from the selected icon pack", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = HomeSettings.tasksDotCount.value, onCheckedChange = { HomeSettings.setTasksDotCount(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Weather status island", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Hide it to give the remaining islands more room", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = HomeSettings.weatherIsland.value, onCheckedChange = { HomeSettings.setWeatherIsland(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Spacer(Modifier.height(10.dp))
+    Text("Carousel icon style", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Text("Compare Material, Tabler, Remix, Lucide, Phosphor, Iconoir and Hugeicons live", color = Color(0xFF99958E), fontSize = 11.sp)
+    Spacer(Modifier.height(7.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        HomeGlyphStyle.entries.chunked(3).forEach { choices ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                choices.forEach { choice ->
+                    val selected = glyphStyle == choice
+                    Text(
+                        choice.label,
+                        color = if (selected) Color.White else Color(0xFFAAA7A0),
+                        fontSize = 11.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) accent else Color(0xFF111111))
+                            .clickable { glyphStyle = choice; HomeSettings.setGlyphStyle(activity, choice) }
+                            .padding(vertical = 10.dp),
+                    )
+                }
+                repeat(3 - choices.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Reference carousel Home", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("A separate Axial-inspired layout; your current Home remains available", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = HomeSettings.referenceHome.value, onCheckedChange = { HomeSettings.setReferenceHome(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Status islands", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Use the floating glass header; turn off for the original compact header", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = HomeSettings.statusIslands.value, onCheckedChange = { HomeSettings.setStatusIslands(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Command Deck preview", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Replace the two Home cards with a cylindrical carousel", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = HomeSettings.commandDeck.value, onCheckedChange = { HomeSettings.setCommandDeck(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Show time left today", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Display the remaining-time countdown in the header", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = showRemaining, onCheckedChange = { showRemaining = it; persist() }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("12-hour timeline labels", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Show 00, 06, 12, 06, 12 across the day map", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = timeline12Hour, onCheckedChange = { timeline12Hour = it; HomeSettings.setTimeline12Hour(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Hourly timeline labels", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Add dim hour markers between the main six-hour labels", color = Color(0xFF99958E), fontSize = 11.sp)
+        }
+        Switch(checked = timelineHourlyLabels, onCheckedChange = { timelineHourlyLabels = it; HomeSettings.setTimelineHourlyLabels(activity, it) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+}
+
+@Composable
+private fun RaycastCommandBarSetting(activity: SettingsActivity, accent: Color) {
+    val enabled = AppearanceSettings.raycastCommandBar.value
+    val hints = AppearanceSettings.raycastHints.value
+    val nothingBar = AppearanceSettings.nothingBar.value
+    Column {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Nothing-inspired Bar", color = Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Monochrome glass, dot-matrix details, and your accent colour", color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            Switch(
+                checked = nothingBar,
+                onCheckedChange = { AppearanceSettings.saveNothingBar(activity, it) },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Raycast-style command bar", color = Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Show a faded accent Commander mark and simpler search prompt", color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { AppearanceSettings.saveRaycastCommandBar(activity, it) },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Tappable triggers", color = Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Show touch shortcuts floating above the Bar", color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            Switch(
+                checked = hints,
+                onCheckedChange = { AppearanceSettings.saveRaycastHints(activity, it) },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TodoistConnectionSettings(
+    direct: Boolean,
+    token: String,
+    accent: Color,
+    anchor: BringIntoViewRequester,
+    onDirectChange: (Boolean) -> Unit,
+    onTokenChange: (String) -> Unit,
+) {
+    SettingsSectionHeader("todoist", Icons.Outlined.CheckCircleOutline, accent, Modifier.bringIntoViewRequester(anchor))
+    Spacer(Modifier.height(24.dp))
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Add tasks directly", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Skip Todoist Quick Add confirmation", color = Color(0xFF99958E), fontSize = 13.sp)
+        }
+        Switch(
+            checked = direct,
+            onCheckedChange = onDirectChange,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent, uncheckedBorderColor = Color(0xFF55514C)),
+        )
+    }
+    Spacer(Modifier.height(25.dp))
+    Text("Personal API token", color = Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(8.dp))
+    BasicTextField(
+        value = token,
+        onValueChange = onTokenChange,
+        visualTransformation = PasswordVisualTransformation(),
+        singleLine = true,
+        textStyle = TextStyle(color = Color(0xFFF4F1E9), fontSize = 16.sp),
+        modifier = Modifier.fillMaxWidth().background(Color(0xFF111111), RoundedCornerShape(13.dp)).padding(15.dp),
+    )
+    Spacer(Modifier.height(9.dp))
+    Text("Todoist → Settings → Integrations → Developer", color = Color(0xFF99958E), fontSize = 12.sp)
+}
+
+@Composable
+private fun WebSearchSettingsRows(
+    webFallback: Boolean,
+    webPreviews: Boolean,
+    accent: Color,
+    onWebFallbackChanged: (Boolean) -> Unit,
+    onWebPreviewsChanged: (Boolean) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Fall back to web search", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("When no app matches, show one web-search action.", color = Color(0xFF99958E), fontSize = 12.sp)
+        }
+        Switch(
+            checked = webFallback,
+            onCheckedChange = onWebFallbackChanged,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+        )
+    }
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f)) {
+            Text("Web search previews", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Show up to three live Google suggestions after local results are empty", color = Color(0xFF99958E), fontSize = 12.sp)
+        }
+        Switch(
+            checked = webPreviews,
+            enabled = webFallback,
+            onCheckedChange = onWebPreviewsChanged,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+        )
+    }
+}
+
+@Composable
 private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var direct by remember { mutableStateOf(TodoistSettings.directEnabled(activity)) }
     var token by remember { mutableStateOf(TodoistSettings.token(activity)) }
@@ -420,14 +1020,15 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     val capturingHardwareShortcut by HardwareShortcutCapture.target
     var openSingleAppResult by remember { mutableStateOf(AppSearchSettings.openSingleResult.value) }
     var webFallback by remember { mutableStateOf(AppSearchSettings.webFallback.value) }
+    var webPreviews by remember { mutableStateOf(AppSearchSettings.webPreviews.value) }
     var aliasSuggestions by remember { mutableStateOf(AppSearchSettings.aliasSuggestions.value) }
     var appShortcutCategory by remember { mutableStateOf(AppSearchSettings.appShortcutCategory.value) }
     var quickControlsCategory by remember { mutableStateOf(AppSearchSettings.quickControlsCategory.value) }
     var holdFirstForAlt by remember { mutableStateOf(HomeTypingSettings.holdFirstForAlt.value) }
-    var hubTabModes by remember { mutableStateOf(HubSettings.tabVisibility.value) }
     var quickHubNavigation by remember { mutableStateOf(HubSettings.quickKeyboardNavigation.value) }
     var closeHubReplyAfterSending by remember { mutableStateOf(HubSettings.closeReplyAfterSending.value) }
     var showHubNotificationImages by remember { mutableStateOf(HubSettings.showNotificationImages.value) }
+    var hubWallpaperGlass by remember { mutableStateOf(HubSettings.wallpaperGlass.value) }
     var tintHubNotificationImages by remember { mutableStateOf(HubSettings.tintNotificationImages.value) }
     var hubNotificationImagesOnRight by remember { mutableStateOf(HubSettings.notificationImagesOnRight.value) }
     var hubHistoryRetention by remember { mutableStateOf(HubSettings.historyRetention.value) }
@@ -435,6 +1036,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var directSms by remember { mutableStateOf(SmsSettings.directEnabled(activity)) }
     val contactsGranted = ActivityCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
     var messengerPhotos by remember { mutableStateOf(MessengerSettings.profilePhotos(activity)) }
+    var commandBarMessageGlyphs by remember { mutableStateOf(MessengerSettings.commandBarMessageGlyphs(activity)) }
     var aliases by remember {
         mutableStateOf(AliasSettings.targets.associate { it.id to AliasSettings.alias(activity, it) })
     }
@@ -454,13 +1056,14 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     val aiAnchor = remember { BringIntoViewRequester() }
     val messagesAnchor = remember { BringIntoViewRequester() }
     val hubAnchor = remember { BringIntoViewRequester() }
+    val homeAnchor = remember { BringIntoViewRequester() }
     val tasksAnchor = remember { BringIntoViewRequester() }
     val appearanceAnchor = remember { BringIntoViewRequester() }
     val filesAnchor = remember { BringIntoViewRequester() }
     val shortcutsAnchor = remember { BringIntoViewRequester() }
     val aliasesAnchor = remember { BringIntoViewRequester() }
     val appsAnchor = remember { BringIntoViewRequester() }
-    val anchors = SettingsAnchors(setupAnchor, backupAnchor, aiAnchor, messagesAnchor, hubAnchor, tasksAnchor, appearanceAnchor, filesAnchor, shortcutsAnchor, aliasesAnchor, appsAnchor)
+    val anchors = SettingsAnchors(setupAnchor, backupAnchor, aiAnchor, messagesAnchor, hubAnchor, homeAnchor, tasksAnchor, appearanceAnchor, filesAnchor, shortcutsAnchor, aliasesAnchor, appsAnchor)
     fun chooseAccent(hex: String) {
         accentHex = hex
         colorValid = true
@@ -479,6 +1082,8 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     ) {
         SettingsNavigation(activity, accent, anchors)
         Spacer(Modifier.height(10.dp))
+        ModuleSettingsPanel(activity, accent)
+        Spacer(Modifier.height(22.dp))
         SettingsSectionHeader("setup", Icons.Outlined.SettingsSuggest, accent, Modifier.bringIntoViewRequester(setupAnchor))
         Spacer(Modifier.height(8.dp))
         CommanderSetup(activity, accent)
@@ -563,6 +1168,11 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Text("Photos are cached only when Messenger notifications arrive", color = Color(0xFF99958E), fontSize = 11.sp)
+        Spacer(Modifier.height(18.dp))
+        CommandBarMessageGlyphSetting(commandBarMessageGlyphs, accent) {
+            commandBarMessageGlyphs = it
+            MessengerSettings.setCommandBarMessageGlyphs(activity, it)
+        }
         Spacer(Modifier.height(16.dp))
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).background(Color(0xFF111111))
@@ -582,6 +1192,18 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         HubHistorySettings(activity, accent, hubHistoryRetention) { next ->
             hubHistoryRetention = next
             HubSettings.saveHistoryRetention(activity, next)
+        }
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Wallpaper glass in Hub", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Use the Home wallpaper beneath a dark full-screen blur", color = Color(0xFF99958E), fontSize = 12.sp)
+            }
+            Switch(
+                checked = hubWallpaperGlass,
+                onCheckedChange = { hubWallpaperGlass = it; HubSettings.saveWallpaperGlass(activity, it) },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
+            )
         }
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -610,6 +1232,8 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )
         }
+        Spacer(Modifier.height(18.dp))
+        HubAppNameColourSetting(activity, accent)
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -670,35 +1294,9 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Spacer(Modifier.height(24.dp))
-        Text("Hub tabs", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-        Text("Tap a tab to cycle between auto, always and hidden. All is always shown.", color = Color(0xFF99958E), fontSize = 12.sp)
-        Spacer(Modifier.height(10.dp))
-        listOf(
-            "messages" to "Messages",
-            "calls" to "Calls",
-            "email" to "Email",
-            "finance" to "Finance",
-            "tasks" to "Tasks",
-            "apps" to "Apps",
-            "flagged" to "Flagged",
-            "summaries" to "Summaries",
-        ).forEach { (id, label) ->
-            val mode = hubTabModes[id] ?: HubTabVisibility.Auto
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                    .clickable {
-                        val next = mode.next()
-                        HubSettings.saveTabVisibility(activity, id, next)
-                        hubTabModes = hubTabModes + (id to next)
-                    }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(label, color = Color(0xFFF4F1E9), fontSize = 14.sp, modifier = Modifier.weight(1f))
-                Text(mode.label, color = if (mode == HubTabVisibility.Hidden) Color(0xFF77736D) else accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-        Text("Hidden summaries remain in Android's notification shade.", color = Color(0xFF99958E), fontSize = 11.sp)
+        HubTabsSettings(activity, accent)
+        Spacer(Modifier.height(24.dp))
+        ImportantSourcesSettings(activity, accent)
         Spacer(Modifier.height(24.dp))
         Text("Hardware shortcuts", color = Color(0xFFF4F1E9), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Text(
@@ -889,20 +1487,19 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         }
         Text("When enabled, also turn on ‘Commander home typing’ in Accessibility.", color = Color(0xFF99958E), fontSize = 11.sp)
         Spacer(Modifier.height(18.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text("Fall back to web search", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("When no app matches, show one web-search action. No live web suggestions are loaded.", color = Color(0xFF99958E), fontSize = 12.sp)
-            }
-            Switch(
-                checked = webFallback,
-                onCheckedChange = {
-                    webFallback = it
-                    AppSearchSettings.saveWebFallback(activity, it)
-                },
-                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
-            )
-        }
+        WebSearchSettingsRows(
+            webFallback = webFallback,
+            webPreviews = webPreviews,
+            accent = accent,
+            onWebFallbackChanged = {
+                webFallback = it
+                AppSearchSettings.saveWebFallback(activity, it)
+            },
+            onWebPreviewsChanged = {
+                webPreviews = it
+                AppSearchSettings.saveWebPreviews(activity, it)
+            },
+        )
         Spacer(Modifier.height(14.dp))
         Text("App search categories", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Text("Optionally mix their matching actions into normal app results", color = Color(0xFF99958E), fontSize = 12.sp)
@@ -961,37 +1558,19 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Spacer(Modifier.height(26.dp))
-        SettingsSectionHeader("todoist", Icons.Outlined.CheckCircleOutline, accent, Modifier.bringIntoViewRequester(tasksAnchor))
-        Spacer(Modifier.height(24.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text("Add tasks directly", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Skip Todoist Quick Add confirmation", color = Color(0xFF99958E), fontSize = 13.sp)
-            }
-            Switch(
-                checked = direct,
-                onCheckedChange = { direct = it; saved = false },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color.White,
-                    checkedTrackColor = accent,
-                    uncheckedBorderColor = Color(0xFF55514C),
-                ),
-            )
-        }
-        Spacer(Modifier.height(25.dp))
-        Text("Personal API token", color = Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        BasicTextField(
-            value = token,
-            onValueChange = { token = it; saved = false },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            textStyle = TextStyle(color = Color(0xFFF4F1E9), fontSize = 16.sp),
-            modifier = Modifier.fillMaxWidth().background(Color(0xFF111111), RoundedCornerShape(13.dp)).padding(15.dp),
+        TodoistConnectionSettings(
+            direct = direct,
+            token = token,
+            accent = accent,
+            anchor = tasksAnchor,
+            onDirectChange = { direct = it; saved = false },
+            onTokenChange = { token = it; saved = false },
         )
-        Spacer(Modifier.height(9.dp))
-        Text("Todoist → Settings → Integrations → Developer", color = Color(0xFF99958E), fontSize = 12.sp)
         Spacer(Modifier.height(28.dp))
+        if (ModuleSettings.homeEnabled.value) {
+            HomeAppearanceSettings(activity, accent, homeAnchor)
+            Spacer(Modifier.height(28.dp))
+        }
         SettingsSectionHeader("appearance", Icons.Outlined.Palette, accent, Modifier.bringIntoViewRequester(appearanceAnchor))
         Spacer(Modifier.height(12.dp))
         Text("Accent colour", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -1053,6 +1632,8 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         Text("Blur appearance", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Text("Choose the screen darkness and glass treatment", color = Color(0xFF99958E), fontSize = 12.sp)
         Spacer(Modifier.height(9.dp))
+        RaycastCommandBarSetting(activity, accent)
+        Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Use one style for light and dark mode", color = Color(0xFFF4F1E9), fontSize = 14.sp, modifier = Modifier.weight(1f))
             Switch(
@@ -1277,6 +1858,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         Spacer(Modifier.height(28.dp))
         SettingsSectionHeader("shortcuts & automations", Icons.Outlined.Keyboard, accent, Modifier.bringIntoViewRequester(shortcutsAnchor))
         Spacer(Modifier.height(10.dp))
+        AssistantGestureSetting(activity, accent)
         Text("App shortcut search alias", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Text("Search shortcuts declared by installed apps. Default: !as", color = Color(0xFF99958E), fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
@@ -1344,6 +1926,8 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
             )
         }
+        Spacer(Modifier.height(20.dp))
+        CommandTriggerSettingsPanel(activity, accent)
         Spacer(Modifier.height(20.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -1462,6 +2046,81 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             saved = colorValid
         }) { Text(if (saved) "Saved" else "Save") }
     }
+}
+
+@Composable
+private fun ModuleSettingsPanel(activity: SettingsActivity, accent: Color) {
+    var homeModule by remember { mutableStateOf(ModuleSettings.homeEnabled.value) }
+    var hubModule by remember { mutableStateOf(ModuleSettings.hubEnabled.value) }
+    var message by remember { mutableStateOf("") }
+    SettingsSectionHeader("modules", Icons.Outlined.Dashboard, accent)
+    Text("Commander Bar works independently of optional modules. Disabled modules do not appear elsewhere in Commander.", color = Color(0xFF99958E), fontSize = 12.sp)
+    if (ModuleSettings.homeAvailable(activity)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Commander Home · experimental", Modifier.weight(1f), color = Color(0xFFF4F1E9), fontSize = 16.sp)
+            Switch(checked = homeModule, onCheckedChange = { enabled ->
+                if (ModuleSettings.setHome(activity, enabled)) { homeModule = enabled; message = "" }
+                else {
+                    message = "Choose another default Home app first, then turn Commander Home off."
+                    activity.startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+                }
+            }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+        }
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("Commander Hub", Modifier.weight(1f), color = Color(0xFFF4F1E9), fontSize = 16.sp)
+        Switch(checked = hubModule, onCheckedChange = { enabled ->
+            ModuleSettings.setHub(activity, enabled)
+            hubModule = enabled
+        }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent))
+    }
+    if (message.isNotBlank()) Text(message, color = accent, fontSize = 12.sp)
+}
+
+@Composable
+private fun CommandTriggerSettingsPanel(activity: SettingsActivity, accent: Color) {
+    var triggers by remember { mutableStateOf(CommandKind.entries.filter { it != CommandKind.Apps }.associateWith(TriggerSettings::editableTriggers)) }
+    var splitPairTrigger by remember { mutableStateOf(SplitPairSettings.trigger.value) }
+    var conflict by remember { mutableStateOf("") }
+    SettingsSectionHeader("command triggers", Icons.Outlined.Keyboard, accent)
+    Spacer(Modifier.height(7.dp))
+    Text("Separate alternatives with commas. Use \\, for a literal comma (e.g. calc, \\,). A trigger can go before or after the query; put a space before it at the end. Clear a field to restore its default.", color = Color(0xFF99958E), fontSize = 12.sp)
+    Spacer(Modifier.height(10.dp))
+    CommandKind.entries.filter { it != CommandKind.Apps }.forEach { kind ->
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(kind.label, Modifier.weight(1f), color = Color(0xFFF4F1E9), fontSize = 14.sp)
+            BasicTextField(
+                value = triggers[kind].orEmpty(),
+                onValueChange = { value ->
+                    triggers = triggers + (kind to value.take(160))
+                    val candidates = TriggerSettings.parseInput(value)
+                    val other = triggers.entries.firstOrNull { entry -> entry.key != kind &&
+                        TriggerSettings.parseInput(entry.value).any { saved -> candidates.any { it.equals(saved, true) } } }
+                    conflict = if (other == null) "" else "${kind.label} conflicts with ${other.key.label}"
+                    if (other == null) TriggerSettings.saveTriggers(activity, mapOf(kind to value))
+                },
+                singleLine = true,
+                textStyle = TextStyle(color = Color(0xFFF4F1E9), fontSize = 14.sp),
+                modifier = Modifier.size(width = 148.dp, height = 42.dp)
+                    .background(Color(0xFF111111), RoundedCornerShape(11.dp)).padding(horizontal = 11.dp, vertical = 10.dp),
+            )
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("split two apps", Modifier.weight(1f), color = Color(0xFFF4F1E9), fontSize = 14.sp)
+        BasicTextField(
+            value = splitPairTrigger,
+            onValueChange = { value ->
+                splitPairTrigger = value.take(24)
+                if (value.isNotBlank()) SplitPairSettings.save(activity, value)
+            },
+            singleLine = true,
+            textStyle = TextStyle(color = Color(0xFFF4F1E9), fontSize = 14.sp),
+            modifier = Modifier.size(width = 148.dp, height = 42.dp)
+                .background(Color(0xFF111111), RoundedCornerShape(11.dp)).padding(horizontal = 11.dp, vertical = 10.dp),
+        )
+    }
+    if (conflict.isNotBlank()) Text(conflict, color = accent, fontSize = 12.sp)
 }
 
 @Composable

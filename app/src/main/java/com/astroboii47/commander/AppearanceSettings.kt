@@ -22,6 +22,9 @@ object AppearanceSettings {
     private const val KEY_NIGHT_STYLE = "night_style"
     private const val KEY_DARKER_BACKGROUND = "darker_background"
     private const val KEY_BACKGROUND_DARKNESS = "background_darkness"
+    private const val KEY_RAYCAST_COMMAND_BAR = "raycast_command_bar"
+    private const val KEY_RAYCAST_HINTS = "raycast_hints"
+    private const val KEY_NOTHING_BAR = "nothing_bar"
 
     val invertBlurDarkness = mutableStateOf(false)
     val blurStyle = mutableStateOf(BlurStyle.Standard)
@@ -38,6 +41,9 @@ object AppearanceSettings {
     val nightStyle = mutableStateOf(BlurStyle.Inverted)
     val darkerBackground = mutableStateOf(false)
     val backgroundDarkness = mutableStateOf(.22f)
+    val raycastCommandBar = mutableStateOf(false)
+    val raycastHints = mutableStateOf(true)
+    val nothingBar = mutableStateOf(false)
 
     fun initialize(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -63,6 +69,9 @@ object AppearanceSettings {
         nightStyle.value = readStyle(prefs.getString(KEY_NIGHT_STYLE, null), BlurStyle.Inverted)
         darkerBackground.value = prefs.getBoolean(KEY_DARKER_BACKGROUND, false)
         backgroundDarkness.value = prefs.getFloat(KEY_BACKGROUND_DARKNESS, .22f).coerceIn(0f, .65f)
+        raycastCommandBar.value = prefs.getBoolean(KEY_RAYCAST_COMMAND_BAR, false)
+        raycastHints.value = prefs.getBoolean(KEY_RAYCAST_HINTS, true)
+        nothingBar.value = prefs.getBoolean(KEY_NOTHING_BAR, false)
     }
 
     fun saveInvertBlurDarkness(context: Context, enabled: Boolean) {
@@ -132,6 +141,21 @@ object AppearanceSettings {
             .apply()
         darkerBackground.value = enabled
         backgroundDarkness.value = safe
+    }
+
+    fun saveRaycastCommandBar(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_RAYCAST_COMMAND_BAR, enabled).apply()
+        raycastCommandBar.value = enabled
+    }
+
+    fun saveRaycastHints(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_RAYCAST_HINTS, enabled).apply()
+        raycastHints.value = enabled
+    }
+
+    fun saveNothingBar(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_NOTHING_BAR, enabled).apply()
+        nothingBar.value = enabled
     }
 
     private fun parseTime(value: String, fallback: LocalTime): LocalTime =

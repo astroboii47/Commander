@@ -57,14 +57,28 @@ object AliasSettings {
         prefs(context).edit().putString(target.id, aliases(alias).joinToString(", ")).apply()
     }
     fun match(context: Context, input: String): AliasMatch? {
-        val split = input.indexOf(' ')
-        if (split <= 0) return null
-        val prefix = normalize(input.substring(0, split))
-        if (prefix.isBlank()) return null
-        val target = targets.firstOrNull { target ->
-            aliases(alias(context, target)).any { TriggerSettings.effectiveAlias(it) == prefix }
-        } ?: return null
-        val query = input.substring(split + 1).trim()
+        val trimmed = input.trim()
+        val firstSplit = trimmed.indexOf(' ')
+        val lastSplit = trimmed.lastIndexOf(' ')
+        if (firstSplit <= 0) {
+            // Keep an exact leading alias active after its separating space is
+            // typed, before the user has entered the first query character.
+            if (input.length <= trimmed.length || !input.last().isWhitespace()) return null
+            val candidate = normalize(trimmed)
+            val target = targets.firstOrNull { target ->
+                aliases(alias(context, target)).any { TriggerSettings.effectiveAlias(it) == candidate }
+            } ?: return null
+            return AliasMatch(target, candidate, "")
+        }
+        val first = normalize(trimmed.substring(0, firstSplit))
+        val last = if (lastSplit > 0) normalize(trimmed.substring(lastSplit + 1)) else ""
+        val matched = sequenceOf(first to trimmed.substring(firstSplit + 1).trim(), last to trimmed.substring(0, lastSplit).trim())
+            .filter { (candidate, query) -> candidate.isNotBlank() && query.isNotBlank() }
+            .mapNotNull { (candidate, query) ->
+                targets.firstOrNull { target -> aliases(alias(context, target)).any { TriggerSettings.effectiveAlias(it) == candidate } }
+                    ?.let { Triple(it, candidate, query) }
+            }.firstOrNull() ?: return null
+        val (target, prefix, query) = matched
         return when (target.id) {
             "maps" -> mapsMatch(target, prefix, query)
             "waze" -> wazeMatch(target, prefix, query)

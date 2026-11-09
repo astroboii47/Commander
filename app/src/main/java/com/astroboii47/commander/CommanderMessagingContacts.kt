@@ -58,7 +58,7 @@ object CommanderMessagingContacts {
     )
     private val retainedReplyActions = linkedMapOf<String, RetainedReplyAction>()
     private val builtInPlatforms = listOf(
-        MessagingPlatformOption("sms", "SMS", emptySet(), setOf("text", "messages")),
+        MessagingPlatformOption("sms", "Messages", emptySet(), setOf("text", "messages")),
         MessagingPlatformOption("whatsapp", "WhatsApp", setOf("com.whatsapp"), setOf("wa")),
         MessagingPlatformOption("messenger", "Messenger", setOf("com.facebook.orca"), setOf("msg", "fb")),
         MessagingPlatformOption("signal", "Signal", setOf("org.thoughtcrime.securesms")),
@@ -378,12 +378,20 @@ object CommanderMessagingContacts {
                     if (needle.isNotBlank() && !contact.name.contains(needle, true) && !route.title.contains(needle, true)) {
                         return@mapNotNull null
                     }
+                    val liveItem = HubRepository.items.firstOrNull { item ->
+                        item.replyAction != null && identity == CommanderMessagingContacts.identity(
+                            item.packageName,
+                            item.shortcutId,
+                            item.conversationTitle ?: item.title,
+                        )
+                    }
                     ContactResult(
                         name = contact.name,
                         number = route.address.orEmpty(),
                         label = listOf(
                             route.platform,
-                            route.title.takeIf { !it.equals(contact.name, true) },
+                            liveItem?.text?.take(72)?.takeIf(String::isNotBlank)
+                                ?: route.title.takeIf { !it.equals(contact.name, true) },
                             if (isReplyAvailable(route)) "reply available"
                             else if (route.packageName == "com.facebook.orca" && route.shortcutId != null) "open conversation"
                             else "notification required",
@@ -392,6 +400,7 @@ object CommanderMessagingContacts {
                         commanderMessagingContactId = contact.id,
                         messagingIdentity = route.identity,
                         messagingPlatform = route.platform,
+                        messagingRouteTitle = route.title,
                         messagingPackageName = route.packageName,
                         messagingPlatformIcon = loadCachedPlatformIcon(context, route.packageName),
                         messagingIsDefault = identity == contact.defaultIdentity,

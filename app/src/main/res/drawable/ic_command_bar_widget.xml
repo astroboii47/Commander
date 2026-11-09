@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Small dotted magnifier, matching the home screen's Nothing-style details. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M22.45,19.45h1.1v1.1h-1.1z M24.45,20.45h1.1v1.1h-1.1z M25.45,22.45h1.1v1.1h-1.1z M24.45,24.45h1.1v1.1h-1.1z M22.45,25.45h1.1v1.1h-1.1z M20.45,24.45h1.1v1.1h-1.1z M19.45,22.45h1.1v1.1h-1.1z M20.45,20.45h1.1v1.1h-1.1z M26.05,26.05h1.1v1.1h-1.1z M27.65,27.65h1.1v1.1h-1.1z" />
+</vector>

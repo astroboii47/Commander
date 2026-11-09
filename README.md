@@ -30,6 +30,7 @@ Commander puts common Android actions behind one searchable overlay. Open the ba
 - Start timers, calculate expressions, and convert common units.
 - Search contacts for calls and messages.
 - Open configurable searches in Maps, YouTube, Spotify, Reddit, Play Store, and other apps.
+- Use optional live web suggestions and open a query in a dismissible quick-search sheet, privacy browser, or full browser.
 - Search common Android Settings destinations through a configurable alias.
 - Discover configured search and Tasker aliases directly inside the command bar.
 - Run selected Tasker tasks.
@@ -38,6 +39,7 @@ Commander puts common Android actions behind one searchable overlay. Open the ba
 - Retain optional encrypted notification history for a user-selected period.
 - Organise SMS contacts and supported app conversations through Commander Contacts.
 - Trigger supported audio, display, media, battery, and device Quick Controls.
+- Launch Commander Bar from a minimal home-screen widget or supported assistant and navigation gestures.
 - Customise accent colour, blur, glow, app-result animation, and interface sounds.
 
 Commander is designed for speed and physical-keyboard devices first. It also works on conventional Android phones and can be operated by touch, but its shortest workflows are built around typing and keyboard navigation.
@@ -83,6 +85,7 @@ Most development and testing has been done on:
 
 - Unihertz Titan 2
 - Zinwa Q25
+- CMF Phone 2 Pro
 
 Commander should work on other Android phones, including other keyboard phones, but hardware-key handling and background-launch behaviour vary between manufacturers. If you test another device, please [open a compatibility report](../../issues/new?template=bug_report.yml) with the model, Android version, keyboard, launcher, and what worked or failed.
 

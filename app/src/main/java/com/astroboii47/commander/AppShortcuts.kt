@@ -31,11 +31,13 @@ object AppShortcutSettings {
         AppShortcutCatalog.clear()
     }
     fun query(context: Context, input: String): String? {
+        if (input.isBlank()) return null
         val alias = TriggerSettings.effectiveAlias(alias(context))
         val normalized = input.trimStart()
         return when {
             normalized.equals(alias, true) -> ""
             normalized.startsWith("$alias ", true) -> normalized.substring(alias.length).trim()
+            normalized.trimEnd().endsWith(" $alias", true) -> normalized.trimEnd().dropLast(alias.length + 1).trim()
             else -> null
         }
     }

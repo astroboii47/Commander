@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/command_bar_widget"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_command_bar_widget"
+    android:contentDescription="@string/shortcut_command_bar_long"
+    android:scaleType="fitCenter"
+    android:src="@drawable/ic_command_bar_widget" />

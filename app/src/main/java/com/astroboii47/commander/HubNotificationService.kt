@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.graphics.drawable.toBitmap
 import android.os.Build
 import android.graphics.Bitmap
+import java.util.LinkedHashMap
 
 data class HubItem(
     val key: String,
@@ -23,7 +24,7 @@ data class HubItem(
     val expandedText: String,
     val textLines: List<String>,
     val messages: List<HubMessage>,
-    val displayImage: Bitmap?,
+    val displayImageKey: String?,
     val displayImageIsMonochrome: Boolean,
     val time: Long,
     val category: String?,
@@ -39,6 +40,48 @@ data class HubItem(
     val sourceKeys: Set<String>,
     val detached: Boolean = false,
 )
+
+/**
+ * One bounded owner for decoded notification imagery. HubItem deliberately
+ * stores only a key, so duplicate app icons and old notification rows cannot
+ * each pin their own native bitmap for the lifetime of the launcher process.
+ *
+ * Do not recycle on eviction: a Compose draw already submitted to HWUI may
+ * still reference that bitmap for the current frame. Once removed from this
+ * map and UI state it is reclaimed safely by Android.
+ */
+object HubImageCache {
+    private const val MAX_IMAGES = 64
+    private val images = LinkedHashMap<String, Bitmap>(MAX_IMAGES, .75f, true)
+
+    @Synchronized
+    fun get(key: String?): Bitmap? = key?.let(images::get)
+
+    @Synchronized
+    fun put(key: String, bitmap: Bitmap): String {
+        images[key] = bitmap
+        while (images.size > MAX_IMAGES) {
+            val eldest = images.entries.iterator()
+            if (!eldest.hasNext()) break
+            eldest.next()
+            eldest.remove()
+        }
+        return key
+    }
+
+    @Synchronized
+    fun trim() {
+        while (images.size > MAX_IMAGES / 2) {
+            val eldest = images.entries.iterator()
+            if (!eldest.hasNext()) break
+            eldest.next()
+            eldest.remove()
+        }
+    }
+
+    @Synchronized
+    fun clear() = images.clear()
+}
 
 data class HubNotificationAction(
     val title: String,
@@ -62,6 +105,9 @@ data class HubReplyAction(
 object HubRepository {
     var items by mutableStateOf<List<HubItem>>(emptyList())
         private set
+    var ongoingPackages by mutableStateOf<Set<String>>(emptySet())
+        private set
+    private var ongoingNotifications: Map<String, String> = emptyMap()
     private var dismissNotification: ((String) -> Unit)? = null
     private var snoozeNotification: ((String, Long) -> Unit)? = null
     private var refreshNotifications: (() -> Unit)? = null
@@ -218,9 +264,13 @@ object HubRepository {
     }
 
     fun replace(notifications: Array<StatusBarNotification>, service: NotificationListenerService) {
+        ongoingNotifications = notifications.asSequence()
+            .filter(StatusBarNotification::isPersistentStatus)
+            .associate { it.key to it.packageName }
+        ongoingPackages = ongoingNotifications.values.toSet()
         items = notifications
             .asSequence()
-            .filter { !it.isOngoing }
+            .filterNot(StatusBarNotification::isPersistentStatus)
             .onEach { it.cacheMessagingPlatformIcon(service) }
             .onEach { it.discoverMessengerConversation(service) }
             .mapNotNull { it.toHubItem(service) }
@@ -235,9 +285,18 @@ object HubRepository {
     }
 
     fun upsert(notification: StatusBarNotification, service: NotificationListenerService) {
-        if (notification.isOngoing) {
-            remove(notification.key)
+        if (notification.isPersistentStatus) {
+            ongoingNotifications = ongoingNotifications + (notification.key to notification.packageName)
+            ongoingPackages = ongoingNotifications.values.toSet()
+            // Ongoing notifications drive status indicators but do not belong
+            // in Hub. Remove only a stale Hub row here—the general remove()
+            // path also clears ongoing state and would immediately undo this.
+            items = items.filterNot { it.key == notification.key || notification.key in it.sourceKeys }
             return
+        }
+        if (notification.key in ongoingNotifications) {
+            ongoingNotifications = ongoingNotifications - notification.key
+            ongoingPackages = ongoingNotifications.values.toSet()
         }
         notification.discoverMessengerConversation(service)
         notification.cacheMessagingPlatformIcon(service)
@@ -254,6 +313,10 @@ object HubRepository {
     }
 
     fun remove(key: String) {
+        if (key in ongoingNotifications) {
+            ongoingNotifications = ongoingNotifications - key
+            ongoingPackages = ongoingNotifications.values.toSet()
+        }
         val mutation = pendingExternalMutation?.takeIf {
             System.currentTimeMillis() - it.time <= EXTERNAL_MUTATION_WINDOW_MS
         }.also { if (it == null) pendingExternalMutation = null }
@@ -291,6 +354,11 @@ object HubRepository {
     }
 }
 
+private val StatusBarNotification.isPersistentStatus: Boolean
+    get() = isOngoing ||
+        notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 ||
+        notification.flags and Notification.FLAG_NO_CLEAR != 0
+
 private const val SENT_REPLY_RETENTION_MS = 24 * 60 * 60 * 1000L
 private const val SENT_REPLY_MATCH_WINDOW_MS = 2 * 60 * 1000L
 private const val ACTION_CONFIRMATION_WINDOW_MS = 5_000L
@@ -314,7 +382,7 @@ class HubNotificationService : NotificationListenerService() {
         }
         HubRepository.attachRefreshHandler(::refresh)
         HubRepository.attachArchiveHandler { HubHistoryStore.archive(applicationContext, it) }
-        refresh()
+        if (ModuleSettings.hubEnabled.value) refresh()
     }
     override fun onListenerDisconnected() {
         HubRepository.attachDismissHandler(null)
@@ -325,9 +393,10 @@ class HubNotificationService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
         ChatGptNotificationBridge.onNotification(applicationContext, sbn)
-        runCatching { HubRepository.upsert(sbn, this) }
+        if (ModuleSettings.hubEnabled.value) runCatching { HubRepository.upsert(sbn, this) }
     }
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        if (!ModuleSettings.hubEnabled.value) return
         sbn?.let {
             HubRepository.items.firstOrNull { item -> item.key == it.key || it.key in item.sourceKeys }
                 ?.let { item -> HubHistoryStore.archive(applicationContext, item) }
@@ -336,6 +405,7 @@ class HubNotificationService : NotificationListenerService() {
     }
 
     private fun refresh() {
+        if (!ModuleSettings.hubEnabled.value) return
         runCatching { HubRepository.replace(activeNotifications ?: emptyArray(), this) }
     }
 }
@@ -427,7 +497,7 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
         text.substringAfter(':').trimStart()
     } else text
     var displayImageIsMonochrome = false
-    val displayImage = runCatching {
+    val displayImageKey = runCatching {
         val latestPersonIcon = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Notification.MessagingStyle.Message
                 .getMessagesFromBundleArray(extras.getParcelableArray(Notification.EXTRA_MESSAGES))
@@ -442,8 +512,20 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
             notification.smallIcon?.also { displayImageIsMonochrome = true }
                 ?: notification.getLargeIcon()
         }
-        preferredIcon?.loadDrawable(service)?.toBitmap(96, 96)
-            ?: service.packageManager.getApplicationIcon(packageName).also { displayImageIsMonochrome = false }.toBitmap(96, 96)
+        val cacheKey = when {
+            preferredIcon != null && conversationLike -> "notification:$key:$postTime"
+            preferredIcon != null && displayImageIsMonochrome -> "small:$packageName"
+            preferredIcon != null -> "notification:$key:$postTime"
+            else -> "app:$packageName"
+        }
+        if (HubImageCache.get(cacheKey) == null) {
+            val decoded = preferredIcon?.loadDrawable(service)?.toBitmap(96, 96)
+                ?: service.packageManager.getApplicationIcon(packageName)
+                    .also { displayImageIsMonochrome = false }
+                    .toBitmap(96, 96)
+            HubImageCache.put(cacheKey, decoded)
+        }
+        cacheKey
     }.getOrNull()
     val hasSummaryFlag = notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
     val isAggregateSummary = hasSummaryFlag && (
@@ -463,7 +545,7 @@ private fun StatusBarNotification.toHubItem(service: NotificationListenerService
         expandedText = expandedText,
         textLines = textLines,
         messages = messages,
-        displayImage = displayImage,
+        displayImageKey = displayImageKey,
         displayImageIsMonochrome = displayImageIsMonochrome,
         time = postTime,
         category = notification.category,

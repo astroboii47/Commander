@@ -5,6 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.graphics.Rect
 import android.graphics.Path
 import android.view.KeyEvent
@@ -14,7 +15,15 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.lang.ref.WeakReference
 
 class HomeTypingAccessibilityService : AccessibilityService() {
+    private var navigationHoldOverlay: NavigationHoldOverlay? = null
     private var foregroundPackage: String? = null
+    private var lastExternalPackage: String? = null
+    private var barUnderlyingPackage: String? = null
+    private val clearLauncherApp = Runnable {
+        if (!OverlayActivity.isInputActive() &&
+            (foregroundPackage == "com.nothing.launcher" || foregroundPackage == "com.android.launcher3")
+        ) lastExternalPackage = null
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
     private var automationGeneration = 0
     private var automationContentMonitoring = false
@@ -29,6 +38,7 @@ class HomeTypingAccessibilityService : AccessibilityService() {
     private val hardwareShortcutKeysDown = mutableMapOf<Int, Long>()
     private var pendingHardwareChord: PendingHardwareChord? = null
     private val consumedHardwareChordKeys = mutableSetOf<Int>()
+    private val consumedHubKeys = mutableSetOf<Int>()
     private var holdSwitcherPrimaryKey = KeyEvent.KEYCODE_UNKNOWN
     private var holdSwitcherStepKey = KeyEvent.KEYCODE_UNKNOWN
     private var holdSwitcherReverseKey = KeyEvent.KEYCODE_UNKNOWN
@@ -43,15 +53,34 @@ class HomeTypingAccessibilityService : AccessibilityService() {
     )
     private var pendingSplit: PendingSplit? = null
     private var splitGeneration = 0
+    private var pendingNothingSplit = 0
+    private enum class NothingSplitStage { Recents, IconTap, Menu }
+    private var nothingSplitStage = NothingSplitStage.Recents
+    private var nothingSplitAttempts = 0
+    private var nothingSplitRetryScheduled = false
+    private var nothingSplitLastTaskBounds: Rect? = null
+    private var nothingSplitTaskStableSince = 0L
+    private var nothingSplitTapCount = 0
+    private var nothingSplitMenuChecks = 0
 
     override fun onServiceConnected() {
         activeService = WeakReference(this)
+        navigationHoldOverlay = NavigationHoldOverlay(this).also { it.start() }
         automationContentMonitoring = false
         keyControlContentMonitoring = false
         updateContentMonitoring()
+        mainHandler.postDelayed({
+            val visibleApp = windows.asSequence()
+                .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                .mapNotNull { it.root?.packageName?.toString() }
+                .firstOrNull(::isRealExternalApp)
+            if (lastExternalPackage == null && visibleApp != null) lastExternalPackage = visibleApp
+        }, 250L)
     }
 
     override fun onDestroy() {
+        navigationHoldOverlay?.stop()
+        navigationHoldOverlay = null
         keyControl.stop()
         if (activeService?.get() === this) activeService = null
         mainHandler.removeCallbacksAndMessages(null)
@@ -61,6 +90,7 @@ class HomeTypingAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         keyControl.onAccessibilityEvent(event)
         handlePendingSplit(event)
+        handlePendingNothingSplit(event)
         if (event?.packageName?.toString() == "com.facebook.orca" &&
             (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
@@ -111,13 +141,31 @@ class HomeTypingAccessibilityService : AccessibilityService() {
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             event.packageName?.toString()?.let { packageName ->
                 foregroundPackage = packageName
+                if (packageName == "com.nothing.launcher" || packageName == "com.android.launcher3") {
+                    // The OEM briefly reports Launcher during the handoff from
+                    // an app to our translucent Bar. Do not discard the app
+                    // until Launcher has actually stayed in front.
+                    mainHandler.removeCallbacks(clearLauncherApp)
+                    mainHandler.postDelayed(clearLauncherApp, 400L)
+                } else {
+                    mainHandler.removeCallbacks(clearLauncherApp)
+                    if (isRealExternalApp(packageName)) lastExternalPackage = packageName
+                }
             }
         }
     }
 
+    private fun isRealExternalApp(packageName: String): Boolean =
+        packageName !in setOf(
+            this.packageName, "com.android.systemui", "com.nothing.launcher",
+            "com.android.launcher3", "com.google.android.inputmethod.latin",
+            "com.essential.remapper", "com.pryshedko.mtisland", "com.sameerasw.essentials",
+        ) && packageManager.getLaunchIntentForPackage(packageName) != null
+
     private fun launchOverlay(intent: Intent) {
         startActivity(intent)
     }
+
 
     private fun handlePendingSplit(event: AccessibilityEvent?) {
         val split = pendingSplit ?: return
@@ -139,6 +187,153 @@ class HomeTypingAccessibilityService : AccessibilityService() {
                 if (packageName != RECENTS_PACKAGE) return
                 attemptSelectSplitScreen(split.generation, 0)
             }
+        }
+    }
+
+    private fun recentAppsRoot(): AccessibilityNodeInfo? = windows.firstOrNull {
+        it.title?.toString() == "Recent apps"
+    }?.root
+
+    private fun handlePendingNothingSplit(event: AccessibilityEvent?) {
+        val generation = pendingNothingSplit
+        if (generation == 0 || event == null ||
+            event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        ) return
+        when (nothingSplitStage) {
+            NothingSplitStage.Recents -> if (recentAppsRoot() != null) attemptNothingSplitIcon(generation)
+            NothingSplitStage.Menu -> attemptNothingSplitMenu(generation)
+            NothingSplitStage.IconTap -> Unit
+        }
+    }
+
+    private fun scheduleNothingSplitRetry(generation: Int) {
+        if (pendingNothingSplit != generation || nothingSplitRetryScheduled) return
+        if (++nothingSplitAttempts > 80) {
+            pendingNothingSplit = 0
+            return
+        }
+        nothingSplitRetryScheduled = true
+        mainHandler.postDelayed({
+            nothingSplitRetryScheduled = false
+            if (pendingNothingSplit == generation) when (nothingSplitStage) {
+                NothingSplitStage.Recents -> attemptNothingSplitIcon(generation)
+                NothingSplitStage.Menu -> attemptNothingSplitMenu(generation)
+                NothingSplitStage.IconTap -> Unit
+            }
+        }, 50L)
+    }
+
+    private fun attemptNothingSplitIcon(generation: Int) {
+        if (pendingNothingSplit != generation || nothingSplitStage != NothingSplitStage.Recents) return
+        val root = recentAppsRoot()
+        if (root == null) {
+            scheduleNothingSplitRetry(generation)
+            return
+        }
+        val width = resources.displayMetrics.widthPixels
+        val tasks = mutableListOf<AccessibilityNodeInfo>()
+        fun collect(node: AccessibilityNodeInfo) {
+            if (node.viewIdResourceName == "com.nothing.launcher:id/task_view_single") tasks += node
+            for (index in 0 until node.childCount) node.getChild(index)?.let(::collect)
+        }
+        collect(root)
+        val task = tasks.minByOrNull { node ->
+            val bounds = Rect().also(node::getBoundsInScreen)
+            kotlin.math.abs(bounds.centerX() - width / 2)
+        }
+        if (task == null) {
+            scheduleNothingSplitRetry(generation)
+            return
+        }
+        val taskBounds = Rect().also(task::getBoundsInScreen)
+        val previousBounds = nothingSplitLastTaskBounds
+        val now = SystemClock.uptimeMillis()
+        if (previousBounds == null ||
+            kotlin.math.abs(previousBounds.left - taskBounds.left) > 6 ||
+            kotlin.math.abs(previousBounds.top - taskBounds.top) > 6 ||
+            kotlin.math.abs(previousBounds.right - taskBounds.right) > 6
+        ) {
+            nothingSplitLastTaskBounds = Rect(taskBounds)
+            nothingSplitTaskStableSince = now
+            scheduleNothingSplitRetry(generation)
+            return
+        }
+        if (now - nothingSplitTaskStableSince < 65L) {
+            scheduleNothingSplitRetry(generation)
+            return
+        }
+        val nativeAction = task.actionList.firstOrNull {
+            it.label?.toString()?.equals("Split screen", true) == true
+        }
+        if (nativeAction != null && task.performAction(nativeAction.id)) {
+            pendingNothingSplit = 0
+            return
+        }
+        val icon = findNode(task) { it.viewIdResourceName == "com.nothing.launcher:id/icon" }
+        val iconBounds = icon?.let { Rect().also(it::getBoundsInScreen) }
+        val snapshot = findNode(task) { it.viewIdResourceName == "com.nothing.launcher:id/snapshot" }
+        val snapshotBounds = snapshot?.let { Rect().also(it::getBoundsInScreen) }
+        if (taskBounds.width() <= 0 ||
+            (iconBounds?.width() != null && iconBounds.width() <= 0) ||
+            (iconBounds == null && (snapshotBounds == null || snapshotBounds.top <= taskBounds.top))
+        ) {
+            scheduleNothingSplitRetry(generation)
+            return
+        }
+        val x = iconBounds?.centerX()?.toFloat() ?: taskBounds.centerX().toFloat()
+        val y = if (iconBounds != null && iconBounds.bottom > 0) {
+            if (iconBounds.height() > 0) iconBounds.centerY().toFloat()
+            else iconBounds.bottom - iconBounds.width() / 2f
+        } else {
+            // Nothing's Recents omits the app-icon node on some frames. Its
+            // header is the measured space above this task's snapshot.
+            (taskBounds.top + snapshotBounds!!.top) / 2f
+        }
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, 32L)).build()
+        nothingSplitStage = NothingSplitStage.IconTap
+        nothingSplitTapCount++
+        val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                if (pendingNothingSplit != generation) return
+                nothingSplitStage = NothingSplitStage.Menu
+                nothingSplitMenuChecks = 0
+                attemptNothingSplitMenu(generation)
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                if (pendingNothingSplit != generation) return
+                nothingSplitStage = NothingSplitStage.Recents
+                scheduleNothingSplitRetry(generation)
+            }
+        }, null)
+        if (!dispatched) {
+            nothingSplitStage = NothingSplitStage.Recents
+            scheduleNothingSplitRetry(generation)
+        }
+    }
+
+    private fun attemptNothingSplitMenu(generation: Int) {
+        if (pendingNothingSplit != generation || nothingSplitStage != NothingSplitStage.Menu) return
+        val root = recentAppsRoot()
+        val label = root?.let { findNode(it) { node -> node.text?.toString()?.equals("Split screen", true) == true } }
+        val menuAction = label?.let(::clickableAncestor)
+        val clicked = menuAction?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        if (clicked) {
+            pendingNothingSplit = 0
+        } else if (++nothingSplitMenuChecks >= 10) {
+            if (nothingSplitTapCount >= 3) {
+                pendingNothingSplit = 0
+            } else {
+                // A tap during the launcher's settling animation can be
+                // delivered without opening its menu. Retry on the stable card.
+                nothingSplitStage = NothingSplitStage.Recents
+                nothingSplitLastTaskBounds = null
+                scheduleNothingSplitRetry(generation)
+            }
+        } else {
+            scheduleNothingSplitRetry(generation)
         }
     }
 
@@ -385,6 +580,53 @@ class HomeTypingAccessibilityService : AccessibilityService() {
 
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
+        // Accessibility receives Titan hardware events before the foreground
+        // Activity. Give only Hub's own recognized commands first refusal;
+        // unrelated keys and explicit global shortcuts still use the normal
+        // Commander Bar path.
+        val commanderForeground = rootInActiveWindow?.packageName?.toString() == packageName ||
+            foregroundPackage == packageName
+        if (commanderForeground &&
+            (HubActivity.overlayResumed || (MainActivity.launcherResumed && MainActivity.activeSurfacePage == MainActivity.SURFACE_HUB))) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                val enter = event.keyCode == KeyEvent.KEYCODE_ENTER || event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+                val handled = if (enter) HubKeyBridge.handleEnter() else HubKeyBridge.handleKey(event.keyCode)
+                if (handled) {
+                    consumedHubKeys += event.keyCode
+                    return true
+                }
+            }
+            if (event.action == KeyEvent.ACTION_UP && consumedHubKeys.remove(event.keyCode)) return true
+        }
+        // The foreground Home page owns its vertical category navigation.
+        // Handle these before global shortcuts can consume the arrow event;
+        // horizontal carousel keys retain their existing route below.
+        if (MainActivity.launcherResumed &&
+            MainActivity.activeSurfacePage == MainActivity.SURFACE_HOME &&
+            event.keyCode in listOf(KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN)
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                HomeCarouselKeyBridge.moveStack(if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP) 1 else -1)
+            }
+            return true
+        }
+        // The first fast typing burst belongs to the handoff before global
+        // shortcuts get a chance to consume its second character.
+        if (HomeTypingHandoff.isCollecting() && event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0 && !event.isCtrlPressed && !event.isMetaPressed
+        ) {
+            if (event.keyCode != heldHomeKeyCode) cancelHeldHomeKeyConversion()
+            if (event.keyCode == KeyEvent.KEYCODE_DEL) {
+                if (HomeTypingHandoff.backspace()) return true
+                HomeTypingHandoff.finish()
+            } else {
+                val unicode = event.getUnicodeChar(event.metaState)
+                if (unicode != 0 && !Character.isISOControl(unicode)) {
+                    HomeTypingHandoff.append(String(Character.toChars(unicode)))
+                    return true
+                }
+            }
+        }
         if (HardwareShortcutCapture.onKeyEvent(this, event)) return true
         if (holdSwitcherPrimaryKey != KeyEvent.KEYCODE_UNKNOWN) {
             when {
@@ -521,6 +763,21 @@ class HomeTypingAccessibilityService : AccessibilityService() {
             hardwareShortcutKeysDown.remove(event.keyCode)
         }
         if (keyControl.active) return keyControl.onKeyEvent(event)
+        // Space is a physical carousel command while Commander Home owns the
+        // foreground. Consume it before the global type-to-Bar handoff sees a
+        // printable character.
+        if (MainActivity.launcherResumed && MainActivity.activeSurfacePage == MainActivity.SURFACE_HOME &&
+            event.keyCode in listOf(KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_HOME, KeyEvent.KEYCODE_MOVE_HOME)
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_HOME, KeyEvent.KEYCODE_MOVE_HOME ->
+                        HomeCarouselKeyBridge.moveFromHomeButton()
+                    else -> HomeCarouselKeyBridge.space()
+                }
+            }
+            return true
+        }
         if (!HomeTypingSettings.enabled.value) return false
         if (event.action == KeyEvent.ACTION_UP) {
             if (event.keyCode == heldHomeKeyCode) cancelHeldHomeKeyConversion()
@@ -559,6 +816,12 @@ class HomeTypingAccessibilityService : AccessibilityService() {
             Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
             android.content.pm.PackageManager.MATCH_DEFAULT_ONLY,
         )?.activityInfo?.packageName ?: return false
+        // Other launchers may be the system HOME. The accessibility service
+        // should type-to-Bar on whichever launcher actually owns HOME, while
+        // Commander's own Hub and Apps pages must never inherit that binding.
+        if (homePackage == packageName &&
+            (!MainActivity.launcherResumed || MainActivity.activeSurfacePage != MainActivity.SURFACE_HOME)
+        ) return false
         if (!isHomeFocused(homePackage)) return false
         // Alt is how compact physical keyboards produce punctuation such as
         // @, -, and ?. Accept it when Android resolves a printable character.
@@ -674,6 +937,7 @@ class HomeTypingAccessibilityService : AccessibilityService() {
 
         fun isConnected(): Boolean = activeService?.get() != null
 
+
         fun toggleKeyControl(delayMs: Long = 0L): Boolean {
             val service = activeService?.get() ?: return false
             val toggle = Runnable {
@@ -712,6 +976,67 @@ class HomeTypingAccessibilityService : AccessibilityService() {
                 if (service.pendingSplit?.generation == generation) service.cancelPendingSplit()
             }, 5_000L)
             return true
+        }
+
+        fun splitWithSystemAction(): Boolean {
+            val service = activeService?.get() ?: return false
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return false
+            if (service.systemActions.none { it.id == GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN }) return false
+            service.mainHandler.postDelayed({
+                service.performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+            }, 180L)
+            return true
+        }
+
+        fun openQuickSettings(): Boolean {
+            val service = activeService?.get() ?: return false
+            service.mainHandler.postDelayed({
+                service.performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+            }, 180L)
+            return true
+        }
+
+        fun splitWithNothingRecents(): Boolean {
+            val service = activeService?.get() ?: return false
+            val generation = ++service.splitGeneration
+            service.pendingNothingSplit = generation
+            service.nothingSplitStage = NothingSplitStage.Recents
+            service.nothingSplitAttempts = 0
+            service.nothingSplitLastTaskBounds = null
+            service.nothingSplitTapCount = 0
+            service.nothingSplitMenuChecks = 0
+            service.mainHandler.postDelayed({
+                if (service.pendingNothingSplit == generation && service.performGlobalAction(GLOBAL_ACTION_RECENTS)) {
+                    service.scheduleNothingSplitRetry(generation)
+                } else {
+                    service.pendingNothingSplit = 0
+                }
+            }, 80L)
+            return true
+        }
+
+        fun activeAppForSplit(): String? {
+            val service = activeService?.get() ?: return null
+            service.barUnderlyingPackage?.let { return it }
+            service.lastExternalPackage?.let { return it }
+            return service.windows.asSequence()
+                .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                .mapNotNull { it.root?.packageName?.toString() }
+                .firstOrNull(service::isRealExternalApp)
+        }
+
+        fun captureAppBehindBar() {
+            val service = activeService?.get() ?: return
+            service.mainHandler.removeCallbacks(service.clearLauncherApp)
+            // Reading every accessibility window/root is an IPC traversal and
+            // can stall Bar's first frame under load. Keep the event-derived
+            // package here; activeAppForSplit() performs the window fallback
+            // only when the user actually requests a split.
+            service.barUnderlyingPackage = service.lastExternalPackage
+        }
+
+        fun clearAppBehindBar() {
+            activeService?.get()?.barUnderlyingPackage = null
         }
 
         private const val RECENTS_PACKAGE = "com.android.launcher3"

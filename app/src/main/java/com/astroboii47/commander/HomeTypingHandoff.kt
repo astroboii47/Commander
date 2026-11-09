@@ -14,6 +14,10 @@ object HomeTypingHandoff {
     @Volatile private var firstKeyConverted = false
 
     fun begin(initial: String, keyCode: Int = KeyEvent.KEYCODE_UNKNOWN) {
+        // Accessibility and MainActivity can both observe the first key while
+        // the overlay starts. A second begin must not erase the next key that
+        // the accessibility service has already buffered.
+        if (isCollecting() && firstKeyCode == keyCode && text.value.startsWith(initial)) return
         text.value = initial
         val now = SystemClock.elapsedRealtime()
         lastKeyAt = now

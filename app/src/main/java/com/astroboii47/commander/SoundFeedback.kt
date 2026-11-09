@@ -70,10 +70,13 @@ enum class ConfirmationSoundStyle(val label: String) {
 object SoundFeedback {
     private const val SAMPLE_RATE = 24_000
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var soundPool: SoundPool? = null
+    @Volatile private var soundPool: SoundPool? = null
     private var pulseLaunchId = 0
     private var pulseConfirmId = 0
     private val loadedSounds = mutableSetOf<Int>()
+
+    fun isReady(): Boolean = soundPool != null &&
+        synchronized(loadedSounds) { pulseLaunchId in loadedSounds }
     private val samples by lazy {
         mapOf(
             CommandSound.Open to tone(52, 760.0, 800.0, .060, 2.0),
@@ -87,7 +90,7 @@ object SoundFeedback {
         )
     }
 
-    fun initialize(context: Context) {
+    @Synchronized fun initialize(context: Context) {
         if (soundPool != null) return
         val pool = SoundPool.Builder()
             .setMaxStreams(4)

@@ -1,0 +1,26 @@
+# Commander Bar critical startup path.
+#
+# Keep this deliberately narrower than the entire application package. Home,
+# Hub, wallpaper processing, and the carousel are not needed to display the
+# transient Bar and would increase install-time compilation for no cold-launch
+# benefit.
+HSPLcom/astroboii47/commander/MinimalCommandApplication;->**(**)**
+HSPLcom/astroboii47/commander/MinimalCommandApplication**->**(**)**
+HSPLcom/astroboii47/commander/OverlayActivity;->**(**)**
+HSPLcom/astroboii47/commander/OverlayActivity**->**(**)**
+HSPLcom/astroboii47/commander/CommandOverlayUiKt**->**(**)**
+HSPLcom/astroboii47/commander/CommandEngine;->**(**)**
+HSPLcom/astroboii47/commander/CommandEngine**->**(**)**
+HSPLcom/astroboii47/commander/AppCatalog**->**(**)**
+HSPLcom/astroboii47/commander/AccentSettings**->**(**)**
+HSPLcom/astroboii47/commander/AppearanceSettings**->**(**)**
+HSPLcom/astroboii47/commander/ModuleSettings**->**(**)**
+HSPLcom/astroboii47/commander/TriggerSettings**->**(**)**
+HSPLcom/astroboii47/commander/AliasSettings**->**(**)**
+HSPLcom/astroboii47/commander/AppSearchSettings**->**(**)**
+HSPLcom/astroboii47/commander/FileSearchSettings**->**(**)**
+HSPLcom/astroboii47/commander/HomeTypingHandoff**->**(**)**
+HSPLcom/astroboii47/commander/HomeTypingAccessibilityService**->**(**)**
+HSPLcom/astroboii47/commander/OverlayPalette**->**(**)**
+HSPLcom/astroboii47/commander/AccentSelectionProviderKt**->**(**)**
+

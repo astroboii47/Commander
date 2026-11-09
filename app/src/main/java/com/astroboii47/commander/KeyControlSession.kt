@@ -486,8 +486,7 @@ internal class KeyControlSession(private val service: HomeTypingAccessibilitySer
             if (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()) lastTextNodeCount++
             if (node.actionList.isNotEmpty()) lastActionNodeCount++
             val bounds = Rect().also(node::getBoundsInScreen)
-            if (bounds.isEmpty || !Rect.intersects(bounds, screen)) return
-            bounds.intersect(screen)
+            if (bounds.isEmpty || !bounds.intersect(screen)) return
             val actionIds = node.actionList.map { it.id }.toSet()
             if (node.isScrollable || AccessibilityNodeInfo.ACTION_SCROLL_FORWARD in actionIds ||
                 AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD in actionIds

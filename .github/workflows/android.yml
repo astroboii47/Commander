@@ -18,8 +18,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v6
-      - name: Lint and build debug APK
-        run: ./gradlew lintDebug assembleDebug
+      - name: Test, lint release configuration, and build debug APK
+        run: ./gradlew testDebugUnitTest lintRelease assembleDebug
       - uses: actions/upload-artifact@v7
         with:
           name: commander-debug

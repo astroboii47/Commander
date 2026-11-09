@@ -13,9 +13,14 @@ import android.os.Build
 object MessengerSettings {
     private const val PREFS = "messenger_settings"
     private const val PHOTOS = "profile_photos"
+    private const val COMMAND_BAR_GLYPHS = "command_bar_message_glyphs"
     fun profilePhotos(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(PHOTOS, false)
     fun setProfilePhotos(context: Context, enabled: Boolean) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(PHOTOS, enabled).apply()
+    fun commandBarMessageGlyphs(context: Context) =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(COMMAND_BAR_GLYPHS, true)
+    fun setCommandBarMessageGlyphs(context: Context, enabled: Boolean) =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(COMMAND_BAR_GLYPHS, enabled).apply()
 }
 
 object MessengerChatStore {

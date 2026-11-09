@@ -35,6 +35,7 @@ data class ContactResult(
     val commanderMessagingContactId: String? = null,
     val messagingIdentity: String? = null,
     val messagingPlatform: String? = null,
+    val messagingRouteTitle: String? = null,
     val messagingPackageName: String? = null,
     val messagingPlatformScope: String? = null,
     val messagingPlatformIcon: android.graphics.Bitmap? = null,
@@ -68,19 +69,21 @@ data class ParsedCommand(
 )
 
 fun parseCommand(input: String): ParsedCommand {
-    val first = input.firstOrNull()
-    val kind = when {
-        first == TriggerSettings.noteSymbol() -> CommandKind.Note
-        first == FileSearchSettings.trigger.value -> CommandKind.Files
-        else -> CommandKind.entries.firstOrNull { it != CommandKind.Note && it != CommandKind.Files && it.symbol == first } ?: CommandKind.Apps
+    TriggerSettings.matchingTrigger(input)?.let { (kind, trigger) ->
+        return ParsedCommand(kind, input.drop(trigger.length).trim())
     }
-    val text = when (kind) {
-        CommandKind.Apps -> input.trim()
-        CommandKind.Files -> input.drop(1).trimStart()
-        else -> input.drop(1).trim()
+    TriggerSettings.matchingSuffixTrigger(input)?.let { (kind, trigger) ->
+        return ParsedCommand(kind, input.trimEnd().dropLast(trigger.length).trim())
     }
-    return ParsedCommand(kind, text)
+    TriggerSettings.matchingInlineWordTrigger(input)?.let { (kind, trigger, start) ->
+        val before = input.substring(0, start).trim()
+        val after = input.substring(start + trigger.length).trim()
+        return ParsedCommand(kind, listOf(before, after).filter(String::isNotBlank).joinToString(" "))
+    }
+    return ParsedCommand(CommandKind.Apps, input.trim())
 }
+
+fun commandTrigger(kind: CommandKind): String = TriggerSettings.trigger(kind)
 
 fun commandSymbol(kind: CommandKind): Char? = when (kind) {
     CommandKind.Note -> TriggerSettings.noteSymbol()

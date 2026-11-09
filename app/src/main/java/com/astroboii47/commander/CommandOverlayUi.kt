@@ -14,6 +14,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -42,7 +45,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.OutputTransformation
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.TextFieldBuffer
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -67,6 +77,8 @@ import androidx.compose.material.icons.outlined.Coffee
 import androidx.compose.material.icons.outlined.BrightnessLow
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.ScreenShare
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Splitscreen
 import androidx.compose.material.icons.outlined.StayCurrentPortrait
 import androidx.compose.material.icons.outlined.Swipe
@@ -79,6 +91,7 @@ import androidx.compose.material.icons.outlined.ViewCarousel
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Info
@@ -107,14 +120,18 @@ import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.MarkChatRead
+import androidx.compose.material.icons.outlined.SmsFailed
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
@@ -133,6 +150,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
@@ -140,6 +158,10 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
@@ -153,8 +175,8 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
@@ -169,11 +191,44 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 private val OverlayAccent: Color get() = AccentSettings.color.value
+
+@Composable
+private fun CommanderRaycastMark(modifier: Modifier = Modifier) {
+    Box(modifier) {
+        Canvas(Modifier.matchParentSize().blur(5.dp, BlurredEdgeTreatment.Unbounded)) {
+            val x = size.width * .72f
+            drawLine(OverlayAccent.copy(alpha = .72f), Offset(x, size.height * .32f), Offset(x, size.height * .68f), size.width * .13f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        }
+        Canvas(Modifier.matchParentSize()) {
+            drawRoundRect(
+                color = Color.White.copy(alpha = .14f),
+                topLeft = Offset(size.width * .04f, size.height * .04f),
+                size = Size(size.width * .92f, size.height * .92f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width * .20f),
+                style = Stroke(size.width * .035f),
+            )
+            val chevron = Path().apply {
+                moveTo(size.width * .28f, size.height * .30f)
+                lineTo(size.width * .50f, size.height * .50f)
+                lineTo(size.width * .28f, size.height * .70f)
+            }
+            drawPath(chevron, Color.White.copy(alpha = .62f), style = Stroke(size.width * .090f, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+            val x = size.width * .72f
+            drawLine(OverlayAccent, Offset(x, size.height * .32f), Offset(x, size.height * .68f), size.width * .070f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            drawLine(Color.White.copy(alpha = .34f), Offset(x, size.height * .35f), Offset(x, size.height * .65f), size.width * .020f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        }
+    }
+}
 private val OverlayMono = FontFamily(
     Font(R.font.courier_prime_regular, FontWeight.Normal),
     Font(R.font.courier_prime_bold, FontWeight.Bold),
 )
+private val OverlayHomeMono = FontFamily(
+    Font(R.font.ibm_plex_mono_regular, FontWeight.Normal),
+    Font(R.font.ibm_plex_mono_medium, FontWeight.Medium),
+)
 private val OverlaySans = FontFamily(Font(R.font.inter_variable))
+private val OverlayDot = FontFamily(Font(R.font.ndot_47))
 private val OverlaySerif = FontFamily(Font(R.font.instrument_serif_regular))
 private const val InputSentinel = '\u2060'
 private val ResultViewportBottomPadding = 10.dp
@@ -211,6 +266,7 @@ fun CommandOverlayApp(
     initialAskPrompt: String? = null,
     initialAskWaiting: Boolean = false,
     initialSwitcherMode: Boolean = false,
+    initialTodoistMode: Boolean = false,
     switcherRequestToken: Int = 0,
 ) {
     val configuration = LocalConfiguration.current
@@ -223,8 +279,17 @@ fun CommandOverlayApp(
     val maxVisibleResults = (((configuration.screenHeightDp - 180f) / 74f).toInt())
         .coerceIn(1, 5)
     val blurStyle = AppearanceSettings.styleFor(dark)
-    val glassBar = blurStyle != BlurStyle.Standard
-    val palette = if (glassBar) {
+    val nothingBar = AppearanceSettings.nothingBar.value
+    val glassBar = nothingBar || blurStyle != BlurStyle.Standard
+    val palette = if (nothingBar) {
+        OverlayPalette(
+            panel = Color.Transparent,
+            tile = Color(0xDB141414),
+            text = Color(0xFFF7F7F7),
+            secondary = Color(0xFFC8C8C8),
+            border = Color(0x66FFFFFF),
+        )
+    } else if (glassBar) {
         OverlayPalette(
             // Both layers must remain translucent: the glass tile is drawn over
             // this panel, so an opaque panel would make it look flat grey.
@@ -238,17 +303,26 @@ fun CommandOverlayApp(
         OverlayPalette(Color(0x70070707), Color(0x70111111), Color(0xFFF6F3EA), Color(0xFFAAA7A0), Color(0x604F4F4F))
     }
     var query by remember { mutableStateOf(initialQuery) }
-    var editorValue by remember { mutableStateOf(TextFieldValue(InputSentinel + initialQuery, TextRange(initialQuery.length + 1))) }
+    val editorState = rememberTextFieldState(
+        initialText = InputSentinel + initialQuery,
+        initialSelection = TextRange(initialQuery.length + 1),
+    )
     var notice by remember { mutableStateOf<String?>(null) }
-    var revealed by remember { mutableStateOf(false) }
+    // Keep the editor composed from the first frame while its container
+    // animates in. A separate false -> true state update delayed creation of
+    // the input connection until after the activity had already drawn.
+    val entranceState = remember { MutableTransitionState(false).apply { targetState = true } }
     var settledQuery by remember { mutableStateOf("") }
     var selectedContact by remember { mutableStateOf<ContactResult?>(null) }
     var selectedContactKind by remember { mutableStateOf<CommandKind?>(null) }
     var previousStageQuery by remember { mutableStateOf<String?>(null) }
+    var splitPairMode by remember { mutableStateOf(false) }
+    var splitTopPackage by remember { mutableStateOf<String?>(null) }
+    var splitTopLabel by remember { mutableStateOf<String?>(null) }
     var switcherMode by remember { mutableStateOf(initialSwitcherMode) }
     val holdSwitcherState by HoldSwitcherBridge.state
     var handledHoldDismissRequests by remember { mutableStateOf(0) }
-    var todoistMode by remember { mutableStateOf(false) }
+    var todoistMode by remember { mutableStateOf(initialTodoistMode) }
     var todoistPage by remember { mutableStateOf(TodoistPage.Today) }
     var todoistCalendarDate by remember { mutableStateOf(java.time.LocalDate.now()) }
     var todoistTasks by remember { mutableStateOf(TodoistTasks.cached()) }
@@ -266,7 +340,8 @@ fun CommandOverlayApp(
     var fileDeleteConfirmation by remember { mutableStateOf(false) }
     var switcherAllTasks by remember { mutableStateOf<List<SwitcherTask>>(emptyList()) }
     var switcherExecutingTaskId by remember { mutableStateOf<Int?>(null) }
-    val switcherClient = remember { TaskSwitcherClient(engine.context) {} }
+    // Avoid loading Shizuku service plumbing for ordinary Bar searches.
+    val switcherClient = remember { lazy(LazyThreadSafetyMode.NONE) { TaskSwitcherClient(engine.context) {} } }
     val switcherTasks = remember(switcherAllTasks, query) {
         switcherAllTasks.filter { query.isBlank() || it.label.contains(query, ignoreCase = true) }
     }
@@ -318,26 +393,26 @@ fun CommandOverlayApp(
         if (parsed.kind == CommandKind.Files) FileSearchSettings.parseFilter(parsed.text)
         else FileSearchQuery(parsed.text, FileSearchMode.Default)
     }
-    val aliasMatch = remember(query) { engine.matchAlias(query) }
+    val aliasMatch = remember(query, splitPairMode) { if (splitPairMode) null else engine.matchAlias(query) }
     val settingsResults = remember(aliasMatch) {
         if (aliasMatch?.target?.id == "settings") engine.searchSystemSettings(aliasMatch.query) else emptyList()
     }
     val controlResults = remember(aliasMatch) {
         if (aliasMatch?.target?.id == "control") ControlActions.results(aliasMatch.query) else emptyList()
     }
-    val discoveredAliasSuggestions = remember(query, appListMode, AppSearchSettings.aliasSuggestions.value) {
-        if (appListMode == null) AliasSettings.suggestions(engine.context, query) else emptyList()
+    val discoveredAliasSuggestions = remember(query, appListMode, splitPairMode, AppSearchSettings.aliasSuggestions.value) {
+        if (appListMode == null && !splitPairMode) AliasSettings.suggestions(engine.context, query) else emptyList()
     }
     val aliasSuggestions = remember(query, discoveredAliasSuggestions) {
         val plainText = query.isNotBlank() && query.first().isLetterOrDigit() && !query.contains(' ')
         if (plainText) discoveredAliasSuggestions.filter { it.alias.equals(query, ignoreCase = true) }
         else discoveredAliasSuggestions
     }
-    val shortcutQuery = remember(query, aliasSuggestions) {
-        if (aliasSuggestions.isEmpty()) AppShortcutSettings.query(engine.context, query) else null
+    val shortcutQuery = remember(query, aliasSuggestions, splitPairMode) {
+        if (aliasSuggestions.isEmpty() && !splitPairMode) AppShortcutSettings.query(engine.context, query) else null
     }
-    val exactTaskerResults = remember(query) {
-        TaskerAliases.exactMatches(engine.context, query)
+    val exactTaskerResults = remember(query, splitPairMode) {
+        if (splitPairMode) emptyList() else TaskerAliases.exactMatches(engine.context, query)
     }
     val taskerResults = remember(query, aliasSuggestions, exactTaskerResults) {
         exactTaskerResults.ifEmpty {
@@ -348,7 +423,7 @@ fun CommandOverlayApp(
         if (parsed.kind == CommandKind.Calculator) engine.calculatorPreview(parsed.text) else null
     }
     val inGeminiConversation = askMessages.isNotEmpty()
-    val activeKind = if (fileActionTarget != null) CommandKind.Files else if (inGeminiConversation) CommandKind.Ask else selectedContactKind ?: parsed.kind
+    val activeKind = if (splitPairMode) CommandKind.Apps else if (fileActionTarget != null) CommandKind.Files else if (inGeminiConversation) CommandKind.Ask else selectedContactKind ?: parsed.kind
     val fileActions = remember(fileActionTarget, query) {
         val target = fileActionTarget
         if (target == null) emptyList() else FileAction.entries.filter { action ->
@@ -356,16 +431,16 @@ fun CommandOverlayApp(
                 (query.isBlank() || action.title.contains(query.trim(), ignoreCase = true) || action.subtitle.contains(query.trim(), ignoreCase = true))
         }
     }
-    val plainAliasDiscovery = activeKind == CommandKind.Apps && query.isNotBlank() &&
+    val plainAliasDiscovery = !splitPairMode && activeKind == CommandKind.Apps && query.isNotBlank() &&
         query.first().isLetterOrDigit() && !query.contains(' ') && aliasSuggestions.isNotEmpty()
     var searchableShortcutResults by remember { mutableStateOf<List<AppShortcutResult>>(emptyList()) }
-    val baseApps = remember(query, activeKind, aliasMatch, plainAliasDiscovery, appListMode, switcherMode, todoistMode, searchableShortcutResults,
+    val rawBaseApps = remember(query, activeKind, aliasMatch, plainAliasDiscovery, appListMode, switcherMode, todoistMode, splitPairMode, searchableShortcutResults,
         AppSearchSettings.quickControlsCategory.value, AppSearchSettings.appShortcutCategory.value) {
-        if (switcherMode || todoistMode) emptyList() else
+        if (splitPairMode) engine.allApps(query) else if (switcherMode || todoistMode) emptyList() else
         when (appListMode) {
             AppListMode.All -> engine.allApps(query)
             AppListMode.Recents -> engine.commanderRecents(query)
-            null -> if (activeKind == CommandKind.Apps && aliasMatch == null && (aliasSuggestions.isEmpty() || plainAliasDiscovery)) {
+            null -> if (activeKind == CommandKind.Apps && query.isNotBlank() && aliasMatch == null && (aliasSuggestions.isEmpty() || plainAliasDiscovery)) {
                 // Web fallback must be decided after every searchable category
                 // has contributed. Asking the app catalogue for it here put a
                 // web row above valid Quick Controls and app shortcuts.
@@ -400,6 +475,25 @@ fun CommandOverlayApp(
             } else emptyList()
         }
     }
+    var webSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+    val webFallbackVisible = rawBaseApps.size == 1 &&
+        rawBaseApps.first().packageName.startsWith(CommandEngine.INTERNAL_WEB)
+    LaunchedEffect(query, parsed.text, webFallbackVisible, AppSearchSettings.webPreviews.value) {
+        webSuggestions = emptyList()
+        if (!webFallbackVisible || !AppSearchSettings.webPreviews.value) return@LaunchedEffect
+        delay(280)
+        webSuggestions = WebSearchSuggestions.load(parsed.text)
+    }
+    val baseApps = remember(rawBaseApps, webSuggestions) {
+        if (!webFallbackVisible || webSuggestions.isEmpty()) rawBaseApps
+        else rawBaseApps + webSuggestions.map { suggestion ->
+            AppResult(
+                label = suggestion,
+                packageName = CommandEngine.INTERNAL_WEB + android.net.Uri.encode(suggestion),
+                icon = null,
+            )
+        }
+    }
     var apps by remember { mutableStateOf<List<AppResult>>(emptyList()) }
     var rawFiles by remember { mutableStateOf<List<FileResult>>(emptyList()) }
     var fileSortMode by remember { mutableStateOf(FileSortMode.Relevance) }
@@ -425,8 +519,18 @@ fun CommandOverlayApp(
     val scopedContactQuery = if (messagingPlatform != null) {
         contactQuery.trim().substringAfter(' ', "").trim()
     } else contactQuery
-    val selectedRecentItem = selectedContact?.hubNotificationKey?.let { key ->
-        hubItems.firstOrNull { it.key == key || key in it.sourceKeys }
+    val selectedRecentItem = selectedContact?.let { contact ->
+        contact.hubNotificationKey?.let { key ->
+            hubItems.firstOrNull { it.key == key || key in it.sourceKeys }
+        } ?: contact.messagingIdentity?.let { identity ->
+            hubItems.firstOrNull { item ->
+                item.replyAction != null && identity == CommanderMessagingContacts.identity(
+                    item.packageName,
+                    item.shortcutId,
+                    item.conversationTitle ?: item.title,
+                )
+            }
+        }
     }
     val contacts = remember(activeKind, contactQuery, recentMessagesMode, hubItems, messagingContactsRevision) {
         if ((activeKind == CommandKind.Message || activeKind == CommandKind.Call) && selectedContact == null) {
@@ -474,6 +578,7 @@ fun CommandOverlayApp(
         else -> false
     }
     val actionReady = when {
+        splitPairMode -> apps.isNotEmpty()
         todoistMode -> visibleTodoistTasks.isNotEmpty()
         fileActionTarget != null -> fileActionDetail != null || fileActions.isNotEmpty()
         switcherMode -> switcherTasks.isNotEmpty()
@@ -527,34 +632,50 @@ fun CommandOverlayApp(
     }
     // Keep the Command surface dark, but allow the blurred scene to remain
     // visible. Success states reuse this exact colour to avoid an opacity jump.
-    val commandSurface = palette.tile.copy(alpha = palette.tile.alpha * .24f)
-    val commandBarShape = RoundedCornerShape(17.dp)
+    val commandSurface = if (nothingBar) palette.tile else palette.tile.copy(alpha = palette.tile.alpha * .24f)
+    val commandBarShape = RoundedCornerShape(if (nothingBar) 12.dp else 17.dp)
+    val raycastHints = AppearanceSettings.raycastHints.value
+    val showTriggerChips = raycastHints && query.isEmpty() && selectedContact == null &&
+        !inGeminiConversation && !switcherMode && !todoistMode && fileActionTarget == null
     // The bar is inset by 6 dp, so the outer radius must also be 6 dp larger
     // for both curves to remain optically concentric.
-    val resultsPanelShape = RoundedCornerShape(23.dp)
+    val resultsPanelShape = RoundedCornerShape(if (nothingBar) 18.dp else 23.dp)
 
     LaunchedEffect(switcherMode) {
         if (switcherMode) {
-            switcherClient.bind()
+            switcherClient.value.bind()
             val loadedTasks = withContext(Dispatchers.IO) {
-                TaskSwitcherShell.load(engine.context, switcherClient, forceRefresh = holdSwitcherState.active)
+                TaskSwitcherShell.load(engine.context, switcherClient.value, forceRefresh = holdSwitcherState.active)
             }
             selectedIndex = if (holdSwitcherState.active) {
                 loadedTasks.indexOfFirst { it.packageName != holdSwitcherState.sourcePackage }
                     .takeIf { it >= 0 } ?: 0
             } else 0
             switcherAllTasks = loadedTasks
-            launch(Dispatchers.IO) { switcherClient.prefetch(loadedTasks.take(3)) }
+            launch(Dispatchers.IO) { switcherClient.value.prefetch(loadedTasks.take(3)) }
         }
     }
-    DisposableEffect(Unit) { onDispose { switcherClient.unbind() } }
+    DisposableEffect(Unit) { onDispose { if (switcherClient.isInitialized()) switcherClient.value.unbind() } }
 
     fun setEditorQuery(value: String) {
         query = value
-        editorValue = TextFieldValue(
-            InputSentinel + value,
-            TextRange(value.length + 1),
-        )
+        val next = InputSentinel + value
+        editorState.edit {
+            replace(0, length, next)
+            selection = TextRange(next.length)
+        }
+    }
+
+    LaunchedEffect(query, splitPairMode, SplitPairSettings.trigger.value) {
+        if (!splitPairMode) SplitPairSettings.queryAfterTrigger(query)?.let { remainder ->
+            previousStageQuery = SplitPairSettings.trigger.value
+            splitPairMode = true
+            splitTopPackage = null
+            splitTopLabel = null
+            selectedIndex = 0
+            setEditorQuery(remainder)
+            focusRequester.requestFocus()
+        }
     }
 
     LaunchedEffect(switcherRequestToken) {
@@ -604,9 +725,7 @@ fun CommandOverlayApp(
     }
 
     fun isCommandTrigger(symbol: Char): Boolean =
-        symbol == TriggerSettings.noteSymbol() ||
-            FileSearchSettings.trigger.value == symbol ||
-            CommandKind.entries.any { it != CommandKind.Note && it != CommandKind.Files && it.symbol == symbol } ||
+        TriggerSettings.isSingleCharTrigger(symbol) ||
             AliasSettings.usesPrefix(engine.context, symbol)
 
     LaunchedEffect(askWaiting, askPreview) {
@@ -679,7 +798,8 @@ fun CommandOverlayApp(
     }
     LaunchedEffect(query, baseApps, activeKind, aliasMatch, shortcutQuery, taskerResults, AppSearchSettings.openSingleResult.value) {
         val app = baseApps.singleOrNull()
-        val eligible = AppSearchSettings.openSingleResult.value &&
+        val eligible = !splitPairMode && !query.equals(SplitPairSettings.trigger.value, ignoreCase = true) &&
+            AppSearchSettings.openSingleResult.value &&
             query.isNotBlank() && activeKind == CommandKind.Apps && aliasMatch == null &&
             shortcutQuery == null && taskerResults.isEmpty() && app != null &&
             app.control == null && app.shortcut == null &&
@@ -770,6 +890,23 @@ fun CommandOverlayApp(
 
     fun launchApp(app: AppResult, fromTouch: Boolean = false) {
         if (fromTouch) touchExecutingAppKey = app.packageName
+        if (splitPairMode) {
+            if (splitTopPackage == null) {
+                splitTopPackage = app.packageName
+                splitTopLabel = app.label
+                selectedIndex = 0
+                setEditorQuery("")
+                SoundFeedback.play(engine.context, CommandSound.Step)
+                focusRequester.requestFocus()
+            } else {
+                val error = SplitPairLauncher.launch(engine.context as android.app.Activity, splitTopPackage!!, app.packageName)
+                if (error != null) {
+                    notice = error
+                    playOutcome(error)
+                } else executing = true
+            }
+            return
+        }
         app.control?.let {
             runControl(it)
             return
@@ -819,6 +956,13 @@ fun CommandOverlayApp(
             selectedIndex = 0
             notice = null
             focusRequester.requestFocus()
+            return
+        }
+        if (app.packageName == "internal:key-control") {
+            HomeTypingHandoff.finish()
+            SoundFeedback.play(engine.context, CommandSound.Step)
+            onDismiss()
+            HomeTypingAccessibilityService.toggleKeyControl(delayMs = 220L)
             return
         }
         if (app.packageName == "internal:switcher") {
@@ -872,6 +1016,50 @@ fun CommandOverlayApp(
     }
 
     runControl = fun(result: ControlResult) {
+        if (result.kind == ControlKind.CircleToSearch) {
+            // Clear Bar before Google's screen capture starts, so it sees the app beneath.
+            (engine.context as android.app.Activity).finish()
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                if (!CircleToSearchLauncher.trigger()) {
+                    android.widget.Toast.makeText(
+                        engine.context.applicationContext,
+                        "Circle to Search unavailable. Check Google assistant and Circle to Search settings.",
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }, 120L)
+            return
+        }
+        if (result.kind == ControlKind.SplitPair) {
+            splitPairMode = true
+            splitTopPackage = null
+            splitTopLabel = null
+            previousStageQuery = query
+            selectedIndex = 0
+            notice = null
+            setEditorQuery("")
+            focusRequester.requestFocus()
+            return
+        }
+        if (result.kind == ControlKind.SplitScreen) {
+            val top = HomeTypingAccessibilityService.activeAppForSplit()
+            splitPairMode = true
+            // If Android withholds the underlying window, let the user pick
+            // that first app instead of blocking the entire split command.
+            val launchableTop = top?.takeIf { engine.context.packageManager.getLaunchIntentForPackage(it) != null }
+            splitTopPackage = launchableTop
+            splitTopLabel = launchableTop?.let {
+                engine.context.packageManager.getApplicationLabel(
+                    engine.context.packageManager.getApplicationInfo(it, 0),
+                ).toString()
+            }
+            previousStageQuery = query
+            selectedIndex = 0
+            notice = null
+            setEditorQuery("")
+            focusRequester.requestFocus()
+            return
+        }
         // Mixed-in controls arrive from app search without the `!control`
         // alias. Resolve safe no-value actions before deciding whether we need
         // to turn the bar into a value prompt.
@@ -987,6 +1175,10 @@ fun CommandOverlayApp(
 
     fun execute() {
         if (executing) return
+        if (splitPairMode) {
+            apps.getOrNull(selectedIndex)?.let(::launchApp)
+            return
+        }
         if (todoistMode) {
             visibleTodoistTasks.getOrNull(selectedIndex)?.let { TodoistTasks.open(engine.context, it) }
             return
@@ -1060,7 +1252,7 @@ fun CommandOverlayApp(
                 SoundFeedback.play(engine.context, CommandSound.Confirm)
                 scope.launch {
                     delay(125)
-                    val opened = withContext(Dispatchers.IO) { switcherClient.switch(task) }
+                    val opened = withContext(Dispatchers.IO) { switcherClient.value.switch(task) }
                     if (opened) onDismiss() else {
                         switcherExecutingTaskId = null
                         notice = "Could not switch to ${task.label}"
@@ -1229,7 +1421,7 @@ fun CommandOverlayApp(
                     val error = engine.sendMessageContact(contact, body)
                     executing = false
                     playOutcome(error)
-                    notice = error ?: if (engine.directSmsEnabled()) "message sent · ${contact.name} · SMS"
+                    notice = error ?: if (engine.directSmsEnabled()) "message sent"
                         else "message prepared · ${contact.name} · SMS"
                     return@launch
                 }
@@ -1327,7 +1519,7 @@ fun CommandOverlayApp(
         if (holdSwitcherState.dismissRequests <= handledHoldDismissRequests) return@LaunchedEffect
         handledHoldDismissRequests = holdSwitcherState.dismissRequests
         val task = switcherTasks.getOrNull(selectedIndex) ?: return@LaunchedEffect
-        val removed = withContext(Dispatchers.IO) { switcherClient.remove(task) }
+        val removed = withContext(Dispatchers.IO) { switcherClient.value.remove(task) }
         if (removed) {
             switcherAllTasks = switcherAllTasks.filterNot { it.taskId == task.taskId }
             selectedIndex = selectedIndex.coerceAtMost((switcherTasks.size - 2).coerceAtLeast(0))
@@ -1355,6 +1547,21 @@ fun CommandOverlayApp(
     }
 
     fun emptyBackspace(): Boolean {
+        if (splitPairMode) {
+            if (splitTopPackage != null && previousStageQuery == SplitPairSettings.trigger.value) {
+                splitTopPackage = null
+                splitTopLabel = null
+            } else {
+                splitPairMode = false
+                splitTopPackage = null
+                splitTopLabel = null
+                val previous = previousStageQuery.orEmpty()
+                previousStageQuery = null
+                setEditorQuery(previous)
+            }
+            selectedIndex = 0
+            return true
+        }
         if (todoistMode) {
             todoistMode = false
             todoistError = null
@@ -1415,7 +1622,7 @@ fun CommandOverlayApp(
         }
         return true
     }
-    BackHandler(enabled = fileActionTarget != null) { emptyBackspace() }
+    BackHandler(enabled = fileActionTarget != null || splitPairMode) { emptyBackspace() }
     DisposableEffect(
         switcherMode, switcherTasks.size, todoistMode, visibleTodoistTasks.size,
         fileActionTarget, fileActions.size, fileActionDetail,
@@ -1504,11 +1711,60 @@ fun CommandOverlayApp(
             onDispose { }
         }
     }
+    LaunchedEffect(editorState) {
+        snapshotFlow { editorState.text.toString() to editorState.selection }
+            .distinctUntilChanged()
+            .collect { (text, selection) ->
+                if (executing) {
+                    val expected = InputSentinel + query
+                    if (text != expected) setEditorQuery(query)
+                } else if (!text.startsWith(InputSentinel)) {
+                    val wasAlreadyEmpty = query.isEmpty()
+                    val replacement = text
+                    HomeTypingHandoff.finish()
+                    setEditorQuery(replacement)
+                    // The sentinel makes Backspace on an empty Bar observable.
+                    // Replacing a selection must never dismiss the Bar.
+                    if (wasAlreadyEmpty && replacement.isEmpty() && selection.collapsed) emptyBackspace()
+                } else {
+                    val nextQuery = text.drop(1)
+                    if (nextQuery != query) {
+                        HomeTypingHandoff.finish()
+                        query = nextQuery
+                        notice = null
+                    }
+                }
+            }
+    }
+    var initialPostFocusWorkStarted by remember { mutableStateOf(false) }
+    val overlayWindowFocused = (engine.context as? OverlayActivity)?.windowFocusedState?.value ?: true
+
+    // Compose the real text editor as the window's focused view before Android
+    // performs its first IME handshake. Waiting for window focus here makes the
+    // system briefly connect Gboard to a null editor (inputType=0), hide it,
+    // and then reconnect to this field. The early request is safe without a
+    // window token; the guarded retry below handles devices that defer it.
     LaunchedEffect(Unit) {
-        SoundFeedback.play(engine.context, CommandSound.Open)
-        revealed = true
-        delay(80)
-        focusRequester.requestFocus()
+        if (!editorFocused) focusRequester.requestFocus()
+    }
+    LaunchedEffect(overlayWindowFocused) {
+        if (overlayWindowFocused) {
+            if (!editorFocused) focusRequester.requestFocus()
+            if (!initialPostFocusWorkStarted) {
+                initialPostFocusWorkStarted = true
+                launch(Dispatchers.Default) {
+                    if (!SoundSettings.enabled.value) return@launch
+                    if (SoundFeedback.isReady()) {
+                        SoundFeedback.play(engine.context, CommandSound.Open)
+                    } else {
+                        // Cold SoundPool setup starts two decoders. Preload it
+                        // after the keyboard handoff instead of racing the IME.
+                        delay(1_500)
+                        SoundFeedback.initialize(engine.context.applicationContext)
+                    }
+                }
+            }
+        }
     }
     LaunchedEffect(homeHandoffText) {
         // Empty is meaningful here: it means Backspace removed the first
@@ -1562,7 +1818,7 @@ fun CommandOverlayApp(
         contentAlignment = Alignment.BottomCenter,
     ) {
         AnimatedVisibility(
-            visible = revealed,
+            visibleState = entranceState,
             enter = fadeIn(tween(150)) + slideInVertically(tween(220)) { it / 2 },
             exit = fadeOut(tween(100)) + slideOutVertically(tween(150)) { it / 3 },
         ) {
@@ -1622,6 +1878,9 @@ fun CommandOverlayApp(
                 )
                 Spacer(Modifier.height(10.dp))
             }
+            if (splitPairMode) {
+                SplitPairStageHeader(splitTopLabel, palette)
+            }
             if (isCompletionNotice(notice)) {
                 OverlayCompletion(notice!!, palette, commandSurface, focusRequester)
             } else {
@@ -1634,7 +1893,7 @@ fun CommandOverlayApp(
                     calendarDate = todoistCalendarDate,
                     selectedIndex = selectedIndex,
                     visibleRowCount = if (todoistPage == TodoistPage.Calendar) {
-                        (((configuration.screenHeightDp - 400f) / 74f).toInt()).coerceIn(1, 4)
+                        (((configuration.screenHeightDp - 520f) / 74f).toInt()).coerceIn(1, 3)
                     } else maxVisibleResults,
                     palette = palette,
                     loading = todoistLoading,
@@ -1657,7 +1916,7 @@ fun CommandOverlayApp(
                         tasks = switcherTasks,
                         selectedIndex = selectedIndex,
                         palette = palette,
-                        client = switcherClient,
+                        client = switcherClient.value,
                         executingTaskId = switcherExecutingTaskId,
                         onClick = { task ->
                             selectedIndex = switcherTasks.indexOf(task).coerceAtLeast(0)
@@ -1740,7 +1999,7 @@ fun CommandOverlayApp(
                         } else notice = error
                     }
                 }
-                activeKind == CommandKind.Apps && (query.isNotBlank() || appListMode != null) -> OverlayAppResults(
+                activeKind == CommandKind.Apps && (query.isNotBlank() || appListMode != null || splitPairMode) -> OverlayAppResults(
                     apps = apps,
                     selectedIndex = selectedIndex,
                     visibleRowCount = maxVisibleResults,
@@ -1780,6 +2039,7 @@ fun CommandOverlayApp(
                     listState = fileListState,
                     onVisibleIndicesChanged = { visibleFileIndices = it },
                     onLongClick = ::openFileActions,
+                    onPreview = ::openFileQuickPreview,
                 ) { file ->
                     executing = true
                     scope.launch {
@@ -1899,7 +2159,7 @@ fun CommandOverlayApp(
                             else -> overlayActionLabel(activeKind)
                         }}",
                         color = palette.secondary,
-                        fontFamily = OverlayMono,
+                        fontFamily = if (nothingBar) OverlayDot else OverlayMono,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(horizontal = 10.dp),
                     )
@@ -1907,18 +2167,50 @@ fun CommandOverlayApp(
                 Spacer(Modifier.height(10.dp))
             }
 
+            if (showTriggerChips) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (nothingBar) 6.dp else 8.dp),
+                ) {
+                    listOf(CommandKind.Message, CommandKind.Call, CommandKind.Todo, CommandKind.Note,
+                        CommandKind.Event, CommandKind.Timer, CommandKind.Files, CommandKind.Web,
+                        CommandKind.Calculator, CommandKind.Ask).forEach { kind ->
+                        val prefix = commandTrigger(kind)
+                        Row(
+                            modifier = Modifier.height(if (nothingBar) 34.dp else 36.dp)
+                                .clip(RoundedCornerShape(if (nothingBar) 9.dp else 13.dp))
+                                .background(commandSurface)
+                                .border(1.dp, palette.border, RoundedCornerShape(if (nothingBar) 9.dp else 13.dp))
+                                .clickable {
+                                    setEditorQuery(prefix + if (prefix.firstOrNull()?.isLetter() == true) " " else "")
+                                    selectedIndex = 0
+                                    focusRequester.requestFocus()
+                                }
+                                .padding(horizontal = if (nothingBar) 10.dp else 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(if (prefix == " ") "␠" else prefix, color = if (nothingBar) OverlayAccent else palette.text,
+                                fontFamily = OverlayMono, fontSize = 12.sp, maxLines = 1)
+                            Text(kind.label, color = palette.text,
+                                fontFamily = if (nothingBar) OverlayDot else OverlayMono, fontSize = 12.sp, maxLines = 1)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
             Box(Modifier.fillMaxWidth()) {
             if (query.isNotBlank()) {
                 Box(
                     Modifier
                         .matchParentSize()
                         .blur(
-                            radius = if (actionReady) 12.dp else 7.dp,
+                            radius = if (nothingBar) 6.dp else if (actionReady) 12.dp else 7.dp,
                             edgeTreatment = BlurredEdgeTreatment.Unbounded,
                         )
                         .border(
-                            width = if (actionReady) 3.dp else 2.dp,
-                            color = OverlayAccent.copy(alpha = if (actionReady) .88f else .48f),
+                            width = if (nothingBar) 1.5.dp else if (actionReady) 3.dp else 2.dp,
+                            color = OverlayAccent.copy(alpha = if (nothingBar) .45f else if (actionReady) .88f else .48f),
                             shape = commandBarShape,
                         ),
                 )
@@ -1995,6 +2287,12 @@ fun CommandOverlayApp(
                     .padding(horizontal = 15.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (AppearanceSettings.raycastCommandBar.value) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CommanderRaycastMark(Modifier.size(40.dp))
+                        Spacer(Modifier.width(13.dp))
+                    }
+                }
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                         if (query.isEmpty()) {
                             Text(
@@ -2005,10 +2303,13 @@ fun CommandOverlayApp(
                                 else if (switcherMode) "type to filter apps…"
                                 else if (selectedContact != null && activeKind == CommandKind.Message) "type message…"
                                 else if (selectedContact != null && activeKind == CommandKind.Call) "press enter to call"
-                                else "${FileSearchSettings.displayTrigger()} files  @ message  - todo  ${TriggerSettings.noteSymbol()} note  + timer  , calc  / web  ? ask",
+                                else if (AppearanceSettings.raycastCommandBar.value) "Search for apps or trigger commands…"
+                                else "${commandTrigger(CommandKind.Files).ifBlank { FileSearchSettings.displayTrigger() }} files  ${commandTrigger(CommandKind.Message)} message  ${commandTrigger(CommandKind.Todo)} todo  ${commandTrigger(CommandKind.Note)} note  ${commandTrigger(CommandKind.Timer)} timer  ${commandTrigger(CommandKind.Web)} web",
                                 color = palette.secondary.copy(alpha = .58f),
-                                fontFamily = OverlayMono,
-                                fontSize = 15.sp,
+                                fontFamily = if (AppearanceSettings.raycastCommandBar.value) OverlaySans else OverlayMono,
+                                fontWeight = if (AppearanceSettings.raycastCommandBar.value) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = if (AppearanceSettings.raycastCommandBar.value) 17.sp else 15.sp,
+                                letterSpacing = if (AppearanceSettings.raycastCommandBar.value) (-0.15).sp else 0.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -2017,9 +2318,8 @@ fun CommandOverlayApp(
                         // editor change and can restart the IME. Keep its outer transform
                         // stable for the whole overlay session, while swapping only the
                         // internal colour rule as command state changes.
-                        val editorTransformDelegate = remember { DelegatingVisualTransformation() }
-                        val editorTransformation = remember { SentinelTransformation(editorTransformDelegate) }
-                        editorTransformDelegate.delegate = when {
+                        val editorTransformation = remember { DelegatingOutputTransformation() }
+                        editorTransformation.delegate = when {
                             plainAliasDiscovery && selectedIndex < aliasSuggestions.size -> AliasPrefixTransformation(
                                 aliasSuggestions.getOrNull(selectedIndex)?.alias?.length ?: 0,
                             )
@@ -2032,7 +2332,9 @@ fun CommandOverlayApp(
                             shortcutQuery != null -> AliasPrefixTransformation(
                                 TriggerSettings.effectiveAlias(AppShortcutSettings.alias(engine.context)).length,
                             )
-                            aliasMatch != null -> AliasPrefixTransformation(aliasMatch.alias.length)
+                            aliasMatch != null -> if (query.trimEnd().endsWith(" ${aliasMatch.alias}", true))
+                                AliasSuffixTransformation(aliasMatch.alias.length)
+                            else AliasPrefixTransformation(aliasMatch.alias.length)
                             activeKind == CommandKind.Todo -> TodoistRecognitionTransformation
                             activeKind == CommandKind.Timer -> TimerRecognitionTransformation
                             activeKind == CommandKind.Files && fileSearchQuery.mode != FileSearchMode.Default -> FileFilterPrefixTransformation(
@@ -2049,31 +2351,8 @@ fun CommandOverlayApp(
                             else -> CommandPrefixTransformation
                         }
                         BasicTextField(
-                            value = editorValue,
-                            onValueChange = { next ->
-                                val wasDeletingSelection = !editorValue.selection.collapsed
-                                if (executing) {
-                                    // Keep the editor connection alive so Android never
-                                    // dismisses the IME during the execution animation.
-                                } else if (!next.text.startsWith(InputSentinel)) {
-                                    // Ctrl+A can include the invisible sentinel. If the
-                                    // user types immediately, Android replaces the whole
-                                    // selection with that first character. Preserve it
-                                    // while restoring the sentinel instead of eating it.
-                                    val replacement = if (wasDeletingSelection) next.text else ""
-                                    HomeTypingHandoff.finish()
-                                    setEditorQuery(replacement)
-                                    // Removing a Ctrl+A/range selection can also
-                                    // remove the invisible sentinel. That is a
-                                    // normal edit, not Backspace on an empty bar.
-                                    if (!wasDeletingSelection) emptyBackspace()
-                                } else {
-                                    HomeTypingHandoff.finish()
-                                    editorValue = next
-                                    query = next.text.drop(1)
-                                    notice = null
-                                }
-                            },
+                            state = editorState,
+                            inputTransformation = PreserveSentinelOnVisibleEdit,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 2.dp)
@@ -2120,7 +2399,7 @@ fun CommandOverlayApp(
                                     ) {
                                         heldOverlayFirstKey = native.keyCode
                                         false
-                                    } else if (event.type == KeyEventType.KeyDown && isBackspace && !editorValue.selection.collapsed) {
+                                    } else if (event.type == KeyEventType.KeyDown && isBackspace && !editorState.selection.collapsed) {
                                         // Clear a Ctrl+A selection before Android removes
                                         // the sentinel and asynchronously rebuilds the
                                         // input connection. Fast follow-up typing can
@@ -2170,12 +2449,22 @@ fun CommandOverlayApp(
                                         false
                                     }
                                 },
-                            textStyle = TextStyle(color = palette.text, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp),
+                            textStyle = TextStyle(
+                                color = palette.text,
+                                fontFamily = if (AppearanceSettings.raycastCommandBar.value) OverlaySans else OverlayMono,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = if (AppearanceSettings.raycastCommandBar.value) 23.sp else 24.sp,
+                                letterSpacing = if (AppearanceSettings.raycastCommandBar.value) (-0.2).sp else 0.sp,
+                            ),
                             cursorBrush = SolidColor(OverlayAccent),
-                            visualTransformation = editorTransformation,
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = { submitFromEditor() }),
+                            outputTransformation = editorTransformation,
+                            lineLimits = TextFieldLineLimits.SingleLine,
+                            keyboardOptions = KeyboardOptions(
+                                imeAction = ImeAction.Go,
+                                keyboardType = KeyboardType.Text,
+                                showKeyboardOnFocus = true,
+                            ),
+                            onKeyboardAction = { submitFromEditor() },
                         )
                     }
                 AnimatedVisibility(
@@ -2662,6 +2951,7 @@ private fun OverlayAppResultRow(
     onLongClick: (AppResult) -> Unit,
 ) {
     val glowMode = AppearanceSettings.appGlowMode.value
+    val isWebSearch = app.packageName.startsWith(CommandEngine.INTERNAL_WEB)
     val isAppListMode = app.packageName in setOf(
         "internal:all-apps", "internal:recent-apps", "internal:switcher", "internal:todoist-tasks",
         "internal:key-control", "internal:quick-controls", "internal:app-shortcuts",
@@ -2735,6 +3025,20 @@ private fun OverlayAppResultRow(
                 ) {
                     ControlGlyph(app.control.kind, app.label)
                 }
+            } else if (isWebSearch) {
+                val isExactWebAction = app.label == "Search the web"
+                Box(
+                    Modifier.size(42.dp).clip(RoundedCornerShape(12.dp))
+                        .background(OverlayAccent.copy(alpha = .16f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Public,
+                        contentDescription = if (isExactWebAction) "Search the web" else "Web suggestion",
+                        tint = OverlayAccent,
+                        modifier = Modifier.size(23.dp),
+                    )
+                }
             } else if (isAppListMode) {
                 Box(
                     Modifier.size(42.dp).clip(RoundedCornerShape(12.dp))
@@ -2778,6 +3082,20 @@ private fun OverlayAppResultRow(
                         fontSize = 10.sp,
                     )
                 }
+            } else if (isWebSearch) {
+                val webQuery = remember(app.packageName) {
+                    android.net.Uri.decode(app.packageName.removePrefix(CommandEngine.INTERNAL_WEB))
+                }
+                Text(
+                    if (app.label == "Search the web") "Search web for “$webQuery”" else webQuery,
+                    Modifier.padding(start = 13.dp).weight(1f),
+                    color = palette.text,
+                    fontFamily = OverlaySans,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             } else Text(
                 app.label,
                 Modifier.padding(start = 13.dp).weight(1f),
@@ -2788,8 +3106,52 @@ private fun OverlayAppResultRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (selected) Text("↵", color = if (visualMode == AppGlowMode.Full) Color.White else selectionColor, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+            if (isWebSearch) {
+                val encodedQuery = app.packageName.removePrefix(CommandEngine.INTERNAL_WEB)
+                WebResultAction(
+                    icon = Icons.Outlined.VisibilityOff,
+                    description = "Search privately",
+                    palette = palette,
+                    selected = selected,
+                    selectionColor = selectionColor,
+                ) {
+                    onClick(app.copy(packageName = CommandEngine.INTERNAL_WEB_PRIVATE + encodedQuery))
+                }
+                Spacer(Modifier.width(6.dp))
+                WebResultAction(
+                    icon = Icons.Outlined.OpenInNew,
+                    description = "Open in browser",
+                    palette = palette,
+                    selected = selected,
+                    selectionColor = selectionColor,
+                ) {
+                    onClick(app.copy(packageName = CommandEngine.INTERNAL_WEB_FULL + encodedQuery))
+                }
+            } else if (selected) Text("↵", color = if (visualMode == AppGlowMode.Full) Color.White else selectionColor, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
         }
+    }
+}
+
+@Composable
+private fun WebResultAction(
+    icon: ImageVector,
+    description: String,
+    palette: OverlayPalette,
+    selected: Boolean,
+    selectionColor: Color,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier.size(30.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = description,
+            tint = if (selected) selectionColor else palette.secondary,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -2936,7 +3298,79 @@ private fun OverlayControlResults(
 }
 
 @Composable
+private fun SplitPairStageHeader(topLabel: String?, palette: OverlayPalette) {
+    val choosingTop = topLabel == null
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf(true, false).forEach { top ->
+            val current = if (top) choosingTop else !choosingTop
+            val label = if (top) topLabel ?: "Choose top app" else "Choose bottom app"
+            Row(
+                Modifier.weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (current) OverlayAccent.copy(alpha = .17f) else palette.tile)
+                    .border(1.dp, if (current) OverlayAccent.copy(alpha = .8f) else palette.border, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 9.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SplitControlGlyph(if (top) ControlKind.SplitScreen else ControlKind.SplitRecent, Modifier.size(19.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (top) "TOP" else "BOTTOM", color = if (current) OverlayAccent else palette.secondary,
+                        fontFamily = OverlayMono, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(label, color = palette.text, fontFamily = OverlaySans, fontSize = 12.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SplitControlGlyph(kind: ControlKind, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val stroke = size.width * .065f
+        val radius = CornerRadius(size.width * .08f)
+        val left = size.width * .16f
+        val width = size.width * .68f
+        val rowHeight = size.height * .27f
+        val topY = size.height * .13f
+        val bottomY = size.height * .60f
+        drawRoundRect(
+            color = if (kind == ControlKind.SplitRecent) Color.White.copy(alpha = .58f) else OverlayAccent,
+            topLeft = Offset(left, topY), size = Size(width, rowHeight), cornerRadius = radius,
+            style = if (kind == ControlKind.SplitScreen) androidx.compose.ui.graphics.drawscope.Fill else Stroke(stroke),
+        )
+        drawRoundRect(
+            color = if (kind == ControlKind.SplitScreen) Color.White.copy(alpha = .65f) else OverlayAccent,
+            topLeft = Offset(left, bottomY), size = Size(width, rowHeight), cornerRadius = radius,
+            style = Stroke(stroke),
+        )
+        when (kind) {
+            ControlKind.SplitScreen -> drawCircle(Color.White, size.width * .047f,
+                Offset(size.width * .70f, topY + rowHeight * .5f))
+            ControlKind.SplitRecent -> {
+                val lineY = bottomY + rowHeight * .36f
+                drawLine(OverlayAccent, Offset(size.width * .31f, lineY), Offset(size.width * .70f, lineY), stroke * .70f)
+                drawLine(OverlayAccent, Offset(size.width * .31f, lineY + rowHeight * .29f),
+                    Offset(size.width * .58f, lineY + rowHeight * .29f), stroke * .70f)
+            }
+            ControlKind.SplitPair -> drawLine(OverlayAccent,
+                Offset(size.width * .50f, topY + rowHeight), Offset(size.width * .50f, bottomY), stroke * .8f)
+            else -> Unit
+        }
+    }
+}
+
+@Composable
 private fun ControlGlyph(kind: ControlKind, label: String) {
+    if (kind == ControlKind.SplitScreen || kind == ControlKind.SplitPair || kind == ControlKind.SplitRecent) {
+        SplitControlGlyph(kind, Modifier.size(22.dp))
+        return
+    }
     val context = LocalContext.current
     val suppliedIcon = remember(kind) { aguiControlIcon(context, kind) }
     if (suppliedIcon != null) {
@@ -2965,8 +3399,9 @@ private fun ControlGlyph(kind: ControlKind, label: String) {
         ControlKind.Caffeine -> Icons.Outlined.Coffee
         ControlKind.ScreenDimmer -> Icons.Outlined.BrightnessLow
         ControlKind.QrScanner -> Icons.Outlined.QrCodeScanner
+        ControlKind.CircleToSearch -> Icons.Outlined.Search
         ControlKind.ScreenRecord -> Icons.Outlined.ScreenShare
-        ControlKind.SplitScreen -> Icons.Outlined.Splitscreen
+        ControlKind.SplitScreen, ControlKind.SplitPair, ControlKind.SplitRecent -> Icons.Outlined.Splitscreen
         ControlKind.MiniMode -> Icons.Outlined.StayCurrentPortrait
         ControlKind.ScrollAssistant -> Icons.Outlined.Swipe
     }
@@ -3437,6 +3872,7 @@ private fun OverlayFileResults(
     listState: LazyListState,
     onVisibleIndicesChanged: (List<Int>) -> Unit,
     onLongClick: (FileResult) -> Unit,
+    onPreview: (FileResult) -> Unit,
     onClick: (FileResult) -> Unit,
 ) {
     if (files.isEmpty()) {
@@ -3486,9 +3922,7 @@ private fun OverlayFileResults(
                 Text(file.name, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(file.location.ifBlank { if (file.isDirectory) "folder" else file.mimeType ?: "file" }, color = palette.secondary, fontFamily = OverlayMono, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (sortMode == FileSortMode.Relevance) {
-                if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
-            } else Column(
+            if (sortMode != FileSortMode.Relevance) Column(
                 modifier = Modifier.padding(start = 8.dp).widthIn(min = 72.dp, max = 96.dp),
                 horizontalAlignment = Alignment.End,
             ) {
@@ -3500,13 +3934,23 @@ private fun OverlayFileResults(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (index == selectedIndex) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+            }
+            Box(
+                modifier = Modifier.size(40.dp).clickable { onPreview(file) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.Visibility,
+                    contentDescription = if (file.isDirectory) "Folder details: ${file.name}" else "Preview ${file.name}",
+                    tint = if (index == selectedIndex) OverlayAccent else palette.secondary,
+                    modifier = Modifier.size(22.dp),
+                )
             }
             Icon(
                 Icons.Outlined.MoreVert,
                 contentDescription = "File actions",
                 tint = if (index == selectedIndex) OverlayAccent else palette.secondary.copy(alpha = .72f),
-                modifier = Modifier.padding(start = 5.dp).size(25.dp).clickable { onLongClick(file) },
+                modifier = Modifier.size(40.dp).clickable { onLongClick(file) }.padding(8.dp),
             )
         }
     }
@@ -3770,8 +4214,16 @@ private fun OverlayContactResults(
                                     MessagingPlatformGlyph(contact)
                                 }
                                 Column(Modifier.padding(start = 10.dp).weight(1f)) {
-                                    Text(contact.messagingPlatform ?: "Message", color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    Text(contact.label.substringAfter(" · ", contact.label), color = palette.secondary, fontFamily = OverlayMono, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        contact.messagingRouteTitle?.takeIf(String::isNotBlank) ?: contact.messagingPlatform ?: "Message",
+                                        color = palette.text,
+                                        fontFamily = OverlaySans,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    ReplyStatusLabel(contact, palette, fontSize = 10)
                                 }
                                 if (selected) Text("↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                             }
@@ -3804,7 +4256,7 @@ private fun OverlayContactResults(
                         }
                         Column(Modifier.padding(start = 13.dp).weight(1f)) {
                             Text(contact.name, color = palette.text, fontFamily = OverlaySans, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(contact.label, color = palette.secondary, fontFamily = OverlayMono, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            ReplyStatusLabel(contact, palette)
                         }
                         if (selected) Text("  ↵", color = OverlayAccent, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 22.sp)
                     }
@@ -3814,16 +4266,57 @@ private fun OverlayContactResults(
     }
 }
 
+private fun String.withoutReplyAvailable(): String = split(" · ")
+    .filterNot { it.equals("reply available", true) }
+    .joinToString(" · ")
+
 @Composable
-private fun MessagingPlatformGlyph(contact: ContactResult, compact: Boolean = false) {
+private fun ReplyStatusLabel(contact: ContactResult, palette: OverlayPalette, fontSize: Int = 11) {
+    val label = contact.label
+    val replyReady = label.split(" · ").any { it.equals("reply available", true) }
+    val replyUnavailable = label.split(" · ").any { it.equals("notification required", true) }
+    val cleaned = label.withoutReplyAvailable()
+    val platform = cleaned.substringBefore(" · ").let { if (it.equals("SMS", true)) "Messages" else it }
+    val detail = cleaned.substringAfter(" · ", "")
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(platform, color = palette.secondary, fontFamily = OverlayMono, fontSize = fontSize.sp, maxLines = 1)
+        if (MessengerSettings.commandBarMessageGlyphs(androidx.compose.ui.platform.LocalContext.current)) {
+            MessagingPlatformGlyph(contact, compact = true, tint = palette.secondary, modifier = Modifier.padding(start = 4.dp))
+        }
+        if (replyReady || replyUnavailable) {
+            ReplyStatusGlyph(replyReady, palette.secondary, Modifier.padding(start = 4.dp))
+        }
+        if (detail.isNotBlank()) Text(" · $detail", color = palette.secondary, fontFamily = OverlayMono, fontSize = fontSize.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        else Spacer(Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun ReplyStatusGlyph(available: Boolean, color: Color, modifier: Modifier = Modifier) {
+    Icon(
+        imageVector = if (available) Icons.Outlined.MarkChatRead else Icons.Outlined.SmsFailed,
+        contentDescription = if (available) "Reply available" else "Notification required",
+        tint = color,
+        modifier = modifier.size(12.dp),
+    )
+}
+
+@Composable
+private fun MessagingPlatformGlyph(
+    contact: ContactResult,
+    compact: Boolean = false,
+    tint: Color = OverlayAccent,
+    modifier: Modifier = Modifier,
+) {
     val platform = contact.messagingPlatform
     val iconSize = if (compact) 11.dp else 21.dp
     if (contact.messagingPlatformIcon != null) {
         Image(
             painter = BitmapPainter(contact.messagingPlatformIcon.asImageBitmap()),
             contentDescription = platform ?: "Messaging app",
-            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(OverlayAccent),
-            modifier = Modifier.size(iconSize),
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(tint),
+            modifier = modifier.size(iconSize),
         )
         return
     }
@@ -3842,9 +4335,9 @@ private fun MessagingPlatformGlyph(contact: ContactResult, compact: Boolean = fa
         }
     }
     if (icon != null) {
-        Icon(icon, platform ?: "Messaging app", tint = OverlayAccent, modifier = Modifier.size(iconSize))
+        Icon(icon, platform ?: "Messaging app", tint = tint, modifier = modifier.size(iconSize))
     } else {
-        Icon(Icons.Outlined.ChatBubbleOutline, platform ?: "Messaging app", tint = OverlayAccent, modifier = Modifier.size(iconSize))
+        Icon(Icons.Outlined.ChatBubbleOutline, platform ?: "Messaging app", tint = tint, modifier = modifier.size(iconSize))
     }
 }
 
@@ -3986,13 +4479,22 @@ private object TodoistRecognitionTransformation : VisualTransformation {
         Regex("(?i)\\b(?:tod|today|tom|tomorrow|tonight|this (?:morning|afternoon|evening)|next (?:week|month|year)|every (?:day|weekday|week|month|year|$weekday)|(?:next|this) $weekday|$weekday|in \\d+ (?:days?|weeks?|months?|years?))\\b"),
         Regex("(?i)\\b(?:at )?(?:[01]?\\d|2[0-3])(?::[0-5]\\d)? ?(?:am|pm)\\b"),
         Regex("(?i)\\b(?:at )?(?:[01]?\\d|2[0-3]):[0-5]\\d\\b"),
-        Regex("(?i)\\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?) \\d{1,2}(?:st|nd|rd|th)?\\b"),
+        TodoistNaturalLanguage.dueDatePattern,
     )
 
     override fun filter(text: AnnotatedString): TransformedText {
         val styled = buildAnnotatedString {
             append(text)
-            if (text.startsWith("-")) addStyle(SpanStyle(color = OverlayAccent), 0, 1)
+            TriggerSettings.matchingTrigger(text.text)?.takeIf { it.first == CommandKind.Todo }?.second?.let { trigger ->
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 0, trigger.length)
+            }
+            TriggerSettings.matchingSuffixTrigger(text.text)?.takeIf { it.first == CommandKind.Todo }?.second?.let { trigger ->
+                val end = text.text.trimEnd().length
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), end - trigger.length, end)
+            }
+            TriggerSettings.matchingInlineWordTrigger(text.text)?.takeIf { it.first == CommandKind.Todo }?.let { (_, trigger, start) ->
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), start, start + trigger.length)
+            }
             patterns.forEach { pattern ->
                 pattern.findAll(text.text).forEach { match ->
                     addStyle(
@@ -4016,7 +4518,13 @@ private object TimerRecognitionTransformation : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
         val styled = buildAnnotatedString {
             append(text)
-            if (text.startsWith("+")) addStyle(SpanStyle(color = OverlayAccent), 0, 1)
+            TriggerSettings.matchingTrigger(text.text)?.takeIf { it.first == CommandKind.Timer }?.second?.let { trigger ->
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 0, trigger.length)
+            }
+            TriggerSettings.matchingSuffixTrigger(text.text)?.takeIf { it.first == CommandKind.Timer }?.second?.let { trigger ->
+                val end = text.text.trimEnd().length
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), end - trigger.length, end)
+            }
             patterns.forEach { pattern ->
                 pattern.findAll(text.text).forEach { match ->
                     addStyle(
@@ -4040,6 +4548,50 @@ private class DelegatingVisualTransformation : VisualTransformation {
     var delegate: VisualTransformation = VisualTransformation.None
 
     override fun filter(text: AnnotatedString): TransformedText = delegate.filter(text)
+}
+
+/**
+ * State-based BasicTextField equivalent of [SentinelTransformation]. The
+ * transformation instance stays stable for the lifetime of the Bar, avoiding
+ * an input-connection restart when the highlighted command rule changes.
+ */
+private class DelegatingOutputTransformation : OutputTransformation {
+    var delegate: VisualTransformation = VisualTransformation.None
+
+    override fun TextFieldBuffer.transformOutput() {
+        // Keep the zero-width sentinel in the output buffer so an IME can
+        // delete it when Backspace is pressed on an otherwise empty Bar. If
+        // it is removed here, state-based BasicTextField maps the visible
+        // cursor to offset zero and Gboard has nothing left to delete.
+        val hasSentinel = length > 0 && toString().firstOrNull() == InputSentinel
+        val visibleText = if (hasSentinel) toString().drop(1) else toString()
+        val styled = delegate.filter(AnnotatedString(visibleText)).text
+        val offset = if (hasSentinel) 1 else 0
+        styled.spanStyles.forEach { range ->
+            addStyle(
+                range.item,
+                (range.start + offset).coerceIn(0, length),
+                (range.end + offset).coerceIn(0, length),
+            )
+        }
+    }
+}
+
+/**
+ * Some IMEs delete the final visible character and the adjacent zero-width
+ * sentinel in one edit. Restore the sentinel when the edit began with visible
+ * text; only allow it to disappear when the Bar was already empty, which is
+ * the unambiguous software-keyboard Backspace-to-close gesture.
+ */
+private object PreserveSentinelOnVisibleEdit : InputTransformation {
+    override fun TextFieldBuffer.transformInput() {
+        val before = originalText.toString()
+        val after = toString()
+        if (!after.startsWith(InputSentinel) && before.startsWith(InputSentinel) && before.length > 1) {
+            replace(0, length, InputSentinel + after)
+            selection = TextRange(length)
+        }
+    }
 }
 
 private class SentinelTransformation(
@@ -4066,8 +4618,14 @@ private object CommandPrefixTransformation : VisualTransformation {
         val styled = buildAnnotatedString {
             append(text)
             val first = text.text.firstOrNull()
-            if (first != null && (first == TriggerSettings.noteSymbol() || first == FileSearchSettings.trigger.value || CommandKind.entries.any { it != CommandKind.Note && it != CommandKind.Files && it.symbol == first })) {
-                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 0, 1)
+            val length = TriggerSettings.highlightedPrefixLength(text.text)
+            if (length > 0 && first != null) {
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 0, length.coerceAtMost(text.length))
+            } else {
+                TriggerSettings.matchingSuffixTrigger(text.text)?.second?.let { suffix ->
+                    val end = text.text.trimEnd().length
+                    addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), end - suffix.length, end)
+                }
             }
         }
         return TransformedText(styled, OffsetMapping.Identity)
@@ -4090,20 +4648,42 @@ private class AliasPrefixTransformation(private val prefixLength: Int) : VisualT
     }
 }
 
-private class FileFilterPrefixTransformation(private val prefixLength: Int) : VisualTransformation {
+private class AliasSuffixTransformation(private val suffixLength: Int) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
         val styled = buildAnnotatedString {
             append(text)
-            if (text.isNotEmpty()) {
-                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 0, 1)
-            }
-            val end = (1 + prefixLength).coerceAtMost(text.length)
-            if (end > 1) {
-                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 1, end)
+            val end = text.text.trimEnd().length
+            if (suffixLength > 0 && end >= suffixLength) {
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), end - suffixLength, end)
             }
         }
         return TransformedText(styled, OffsetMapping.Identity)
     }
+}
+
+private class FileFilterPrefixTransformation(private val prefixLength: Int) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val styled = buildAnnotatedString {
+            append(text)
+            val triggerLength = TriggerSettings.matchingTrigger(text.text)
+                ?.takeIf { it.first == CommandKind.Files }?.second?.length ?: 0
+            if (triggerLength > 0) {
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), 0, triggerLength)
+            }
+            val filterStart = text.text.indexOfFirstNonWhitespaceFrom(triggerLength)
+            val end = (filterStart + prefixLength).coerceAtMost(text.length)
+            if (filterStart < end) {
+                addStyle(SpanStyle(color = OverlayAccent, fontWeight = FontWeight.Bold), filterStart, end)
+            }
+        }
+        return TransformedText(styled, OffsetMapping.Identity)
+    }
+}
+
+private fun String.indexOfFirstNonWhitespaceFrom(start: Int): Int {
+    var index = start.coerceIn(0, length)
+    while (index < length && this[index].isWhitespace()) index++
+    return index
 }
 
 private fun overlayActionLabel(kind: CommandKind): String = when (kind) {

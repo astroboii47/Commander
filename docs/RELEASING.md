@@ -21,7 +21,7 @@ Every public Commander update must use the same signing key. Losing it prevents 
 4. Run:
 
    ```bash
-   ./gradlew clean lintDebug testDebugUnitTest assembleRelease
+   ./gradlew clean lintRelease testDebugUnitTest assembleRelease
    ```
 
 5. Confirm `app-release.apk` is signed with the expected certificate.
@@ -48,4 +48,4 @@ Every public Commander update must use the same signing key. Losing it prevents 
 
 ## Alpha release notes
 
-Mark `0.1.0-alpha.1` as a prerelease. State the tested devices, keyboard-first focus, required permissions, experimental integrations, known limitations, and upgrade-signing expectations plainly.
+Mark alpha versions as prereleases. State the tested devices, keyboard-first focus, required permissions, experimental integrations, known limitations, and upgrade-signing expectations plainly.

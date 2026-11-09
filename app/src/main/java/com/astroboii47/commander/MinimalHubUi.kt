@@ -4,6 +4,13 @@ import android.app.Notification
 import android.app.ActivityOptions
 import android.content.Intent
 import android.os.Build
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +18,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -39,15 +50,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.NotificationsNone
+import androidx.compose.material.icons.outlined.NotificationImportant
+import androidx.compose.material.icons.outlined.PriorityHigh
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.AttachMoney
@@ -67,6 +77,8 @@ import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.OutlinedFlag
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.History
@@ -79,6 +91,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,6 +102,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.BlendMode
@@ -128,7 +143,7 @@ private data class HubPalette(
 )
 
 private enum class HubFilter(val label: String) {
-    All("all"), Messages("messages"), Calls("calls"), Email("email"), Finance("finance"), Tasks("tasks"), Apps("apps"), Flagged("flagged"), Summaries("summaries")
+    All("all"), Messages("messages"), Calls("calls"), Email("email"), Finance("finance"), Tasks("tasks"), Apps("apps"), Important("important"), Flagged("flagged"), Summaries("summaries")
 }
 
 private sealed interface HubActionEntry {
@@ -136,6 +151,14 @@ private sealed interface HubActionEntry {
     data object Open : HubActionEntry { override val label = "open" }
     data object Reply : HubActionEntry { override val label = "reply" }
     data class Flag(val flagged: Boolean) : HubActionEntry { override val label = if (flagged) "unflag" else "flag" }
+    data class Important(val important: Boolean) : HubActionEntry { override val label = if (important) "remove importance" else "mark important" }
+    data class ImportantSource(val rule: HubImportantRule, val active: Boolean) : HubActionEntry {
+        override val label = when (rule.kind) {
+            "conversation" -> if (active) "stop prioritising ${rule.label}" else "always important from ${rule.label}"
+            "type" -> if (active) "stop prioritising this alert type" else "always prioritise this alert type"
+            else -> if (active) "stop prioritising ${rule.appName}" else "always important from ${rule.appName}"
+        }
+    }
     data class NotificationAction(val action: HubNotificationAction) : HubActionEntry { override val label = action.title }
     data object Snooze : HubActionEntry { override val label = "snooze for 1 hour" }
     data object Dismiss : HubActionEntry { override val label = "dismiss" }
@@ -164,6 +187,8 @@ private fun HubActionEntry.icon(item: HubItem): ImageVector = when (this) {
     HubActionEntry.Open -> Icons.AutoMirrored.Outlined.OpenInNew
     HubActionEntry.Reply -> Icons.AutoMirrored.Outlined.Reply
     is HubActionEntry.Flag -> if (flagged) Icons.Outlined.Star else Icons.Outlined.StarOutline
+    is HubActionEntry.Important -> if (important) Icons.Outlined.NotificationImportant else Icons.Outlined.PriorityHigh
+    is HubActionEntry.ImportantSource -> Icons.Outlined.NotificationImportant
     HubActionEntry.Snooze -> Icons.Outlined.Schedule
     HubActionEntry.Dismiss -> Icons.Outlined.Close
     HubActionEntry.IgnoreScope -> Icons.Outlined.NotificationsOff
@@ -187,10 +212,14 @@ private fun HubActionEntry.icon(item: HubItem): ImageVector = when (this) {
     }
 }
 
-private fun HubItem.actionEntries(flagged: Boolean): List<HubActionEntry> = buildList {
+private fun HubItem.actionEntries(flagged: Boolean, important: Boolean): List<HubActionEntry> = buildList {
     add(HubActionEntry.Open)
     if (replyAction != null) add(HubActionEntry.Reply)
     add(HubActionEntry.Flag(flagged))
+    add(HubActionEntry.Important(important))
+    HubImportantSettings.candidates(this@actionEntries).forEach { rule ->
+        add(HubActionEntry.ImportantSource(rule, HubImportantSettings.contains(rule)))
+    }
     notificationActions.forEach { add(HubActionEntry.NotificationAction(it)) }
     if (!detached && notificationActions.none { action ->
             action.title.contains("snooze", ignoreCase = true) || action.title.contains("later", ignoreCase = true)
@@ -203,26 +232,37 @@ private fun HubItem.actionEntries(flagged: Boolean): List<HubActionEntry> = buil
 }
 
 @Composable
-fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss: () -> Unit) {
+fun MinimalHubApp(
+    hasAccess: Boolean,
+    openAccessSettings: () -> Unit,
+    onDismiss: () -> Unit,
+    forceWallpaperGlass: Boolean = false,
+    isActiveSurface: Boolean = true,
+) {
     val nightMode = LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
     val dark = nightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES
+    val glass = dark && (forceWallpaperGlass || (HubSettings.wallpaperGlass.value && HomeSettings.wallpaperMode.value != HomeWallpaperMode.Black))
     val palette = if (dark) {
-        HubPalette(Color.Black, Color(0xFF070707), Color(0xFF101010), Color(0xFFF3F1EA), Color(0xFF8C8A84), Color(0xFF303030))
+        HubPalette(if (glass) Color.Transparent else Color.Black, Color(0xFF070707).copy(alpha = if (glass) .74f else 1f), Color(0xFF101010).copy(alpha = if (glass) .72f else 1f), Color(0xFFF3F1EA), Color(0xFF8C8A84), Color(0xFF303030))
     } else {
         HubPalette(Color(0xFFE8E6DF), Color(0xFFF1EFE8), Color(0xFFE4E0D8), Color(0xFF171717), Color(0xFF6F6D67), Color(0xFFCAC6BD))
     }
     val context = LocalContext.current
     val flagPrefs = remember { context.getSharedPreferences("hub_flags", 0) }
+    val importantPrefs = remember { context.getSharedPreferences("hub_important", 0) }
     val readPrefs = remember { context.getSharedPreferences("hub_read", 0) }
     val categoryPrefs = remember { context.getSharedPreferences("hub_categories", 0) }
     var flaggedKeys by remember { mutableStateOf(flagPrefs.getStringSet("keys", emptySet())?.toSet().orEmpty()) }
+    var importantKeys by remember { mutableStateOf(importantPrefs.getStringSet("keys", emptySet())?.toSet().orEmpty()) }
     var readTimes by remember {
         mutableStateOf(readPrefs.all.mapNotNull { (key, value) -> (value as? Long)?.let { key to it } }.toMap())
     }
     var categoryOverrides by remember {
         mutableStateOf(categoryPrefs.all.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }.toMap())
     }
+    var customCategories by remember { mutableStateOf(HubCustomCategories.load(context)) }
     var filter by remember { mutableStateOf(HubFilter.All) }
+    var customFilterId by remember { mutableStateOf<String?>(null) }
     var managing by remember { mutableStateOf(false) }
     var replyKey by remember { mutableStateOf<String?>(null) }
     var replyItemSnapshot by remember { mutableStateOf<HubItem?>(null) }
@@ -234,17 +274,21 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
     var actionResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var actionExecuting by remember { mutableStateOf<String?>(null) }
     var rowConfirmation by remember { mutableStateOf<HubRowConfirmation?>(null) }
+    var swipeActionsKey by remember { mutableStateOf<String?>(null) }
     var selectedIndex by remember { mutableStateOf(0) }
     var expandedKey by remember { mutableStateOf<String?>(null) }
     var keyboardBrowsing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val notificationScroll = rememberScrollState()
     val allItems = HubRepository.items
+    val importantRules = HubImportantSettings.rules.value
     val newCount = remember(allItems, readTimes) {
         allItems.count { !it.isSummary && (readTimes[it.key] ?: 0L) < it.time }
     }
-    val visible = remember(allItems, filter, flaggedKeys, categoryOverrides) {
-        allItems.filter { it.matches(filter, flaggedKeys, categoryOverrides) }
+    val visible = remember(allItems, filter, customFilterId, flaggedKeys, importantKeys, importantRules, categoryOverrides) {
+        if (customFilterId != null) allItems.filter {
+            !it.isSummary && it.effectiveCategory(categoryOverrides) == customFilterId
+        } else allItems.filter { it.matches(filter, flaggedKeys, importantKeys, categoryOverrides) }
     }
     val displayedVisible = remember(visible, rowConfirmation) {
         val confirmation = rowConfirmation
@@ -254,14 +298,17 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
         }
     }
     val filters = HubFilter.entries.filter { entry ->
-        if (entry == HubFilter.All) true else when (HubSettings.visibility(entry.label)) {
+        // Home exposes Important as a first-class status count, so its Hub
+        // destination must never disappear because the list happens to be empty
+        // or an older optional-tab preference was stored.
+        if (entry == HubFilter.All || entry == HubFilter.Important) true else when (HubSettings.visibility(entry.label)) {
             HubTabVisibility.Always -> true
             HubTabVisibility.Hidden -> false
-            HubTabVisibility.Auto -> allItems.any { it.matches(entry, flaggedKeys, categoryOverrides) }
+            HubTabVisibility.Auto -> allItems.any { it.matches(entry, flaggedKeys, importantKeys, categoryOverrides) }
         }
     }
 
-    LaunchedEffect(displayedVisible.size, filter) {
+    LaunchedEffect(displayedVisible.size, filter, customFilterId) {
         selectedIndex = selectedIndex.coerceIn(0, (displayedVisible.size - 1).coerceAtLeast(0))
     }
     LaunchedEffect(filters) {
@@ -270,6 +317,10 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
     fun toggleFlag(key: String) {
         flaggedKeys = if (key in flaggedKeys) flaggedKeys - key else flaggedKeys + key
         flagPrefs.edit().putStringSet("keys", flaggedKeys).apply()
+    }
+    fun toggleImportant(key: String) {
+        importantKeys = if (key in importantKeys) importantKeys - key else importantKeys + key
+        importantPrefs.edit().putStringSet("keys", importantKeys).apply()
     }
     fun markRead(item: HubItem) {
         readTimes = readTimes + (item.key to item.time)
@@ -283,7 +334,8 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
         }
     }
     fun cycleCategory(packageName: String) {
-        val order = listOf("auto", "messages", "calls", "email", "finance", "tasks", "apps")
+        val order = listOf("auto", "messages", "calls", "email", "finance", "tasks", "apps") +
+            customCategories.map(HubCustomCategory::id)
         val current = categoryOverrides[packageName] ?: "auto"
         val next = order[(order.indexOf(current) + 1) % order.size]
         categoryOverrides = if (next == "auto") categoryOverrides - packageName else categoryOverrides + (packageName to next)
@@ -325,6 +377,16 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 toggleFlag(item.key)
                 SoundFeedback.play(context, CommandSound.Confirm)
                 actionPrompt = null
+            }
+            is HubActionEntry.Important -> {
+                toggleImportant(item.key)
+                actionPrompt = null
+                SoundFeedback.play(context, CommandSound.Open)
+            }
+            is HubActionEntry.ImportantSource -> {
+                HubImportantSettings.toggle(context, entry.rule)
+                actionPrompt = null
+                SoundFeedback.play(context, CommandSound.Confirm)
             }
             is HubActionEntry.NotificationAction -> {
                 if (entry.action.destructive && actionConfirmation != entry.action) {
@@ -407,8 +469,9 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
         }
     }
 
-    DisposableEffect(visible, filter, replyKey, actionPrompt, actionMenuIndex, rowConfirmation, HubSettings.quickKeyboardNavigation.value) {
-        HubKeyBridge.navigate = navigate@{ keyCode ->
+    val keyBridgeOwner = remember { Any() }
+    DisposableEffect(visible, filter, replyKey, actionPrompt, actionMenuIndex, rowConfirmation, HubSettings.quickKeyboardNavigation.value, isActiveSurface) {
+        val navigationHandler: (Int) -> Boolean = navigate@{ keyCode ->
             if (rowConfirmation != null) return@navigate true
             actionPrompt?.let { item ->
                 if (keyCode == android.view.KeyEvent.KEYCODE_U || keyCode == android.view.KeyEvent.KEYCODE_P) {
@@ -419,7 +482,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     return@navigate true
                 }
                 if (actionResult != null || actionExecuting != null) return@navigate true
-                val entries = item.actionEntries(item.key in flaggedKeys)
+                val entries = item.actionEntries(item.key in flaggedKeys, item.key in importantKeys)
                 return@navigate when (keyCode) {
                     android.view.KeyEvent.KEYCODE_DPAD_UP, android.view.KeyEvent.KEYCODE_I -> {
                         val next = (actionMenuIndex - 1).coerceAtLeast(0)
@@ -439,10 +502,9 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 }
             }
             if (replyKey != null || managing) return@navigate false
-            val quick = HubSettings.quickKeyboardNavigation.value
             when (keyCode) {
                 android.view.KeyEvent.KEYCODE_DPAD_UP,
-                android.view.KeyEvent.KEYCODE_I.takeIf { quick } -> {
+                android.view.KeyEvent.KEYCODE_I -> {
                     keyboardBrowsing = true
                     if (visible.isNotEmpty()) {
                         val next = (selectedIndex - 1).coerceAtLeast(0)
@@ -452,7 +514,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     true
                 }
                 android.view.KeyEvent.KEYCODE_DPAD_DOWN,
-                android.view.KeyEvent.KEYCODE_K.takeIf { quick } -> {
+                android.view.KeyEvent.KEYCODE_K -> {
                     keyboardBrowsing = true
                     if (visible.isNotEmpty()) {
                         val next = (selectedIndex + 1).coerceAtMost(visible.lastIndex)
@@ -462,27 +524,29 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     true
                 }
                 android.view.KeyEvent.KEYCODE_DPAD_LEFT,
-                android.view.KeyEvent.KEYCODE_J.takeIf { quick } -> {
+                android.view.KeyEvent.KEYCODE_J -> {
                     keyboardBrowsing = true
                     val index = filters.indexOf(filter).coerceAtLeast(0)
                     val next = (index - 1).coerceAtLeast(0)
                     if (next != index) SoundFeedback.play(context, CommandSound.Step)
                     filter = filters[next]
+                    customFilterId = null
                     selectedIndex = 0
                     true
                 }
                 android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
-                android.view.KeyEvent.KEYCODE_L.takeIf { quick } -> {
+                android.view.KeyEvent.KEYCODE_L -> {
                     keyboardBrowsing = true
                     val index = filters.indexOf(filter).coerceAtLeast(0)
                     val next = (index + 1).coerceAtMost(filters.lastIndex)
                     if (next != index) SoundFeedback.play(context, CommandSound.Step)
                     filter = filters[next]
+                    customFilterId = null
                     selectedIndex = 0
                     true
                 }
                 android.view.KeyEvent.KEYCODE_ENTER, android.view.KeyEvent.KEYCODE_DPAD_CENTER,
-                android.view.KeyEvent.KEYCODE_O.takeIf { quick } -> {
+                android.view.KeyEvent.KEYCODE_O -> {
                     visible.getOrNull(selectedIndex)?.let { item ->
                         if (item.replyAction != null) {
                             markRead(item)
@@ -496,7 +560,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     }
                     visible.isNotEmpty()
                 }
-                android.view.KeyEvent.KEYCODE_U.takeIf { quick } -> {
+                android.view.KeyEvent.KEYCODE_U -> {
                     visible.getOrNull(selectedIndex)?.let {
                         HubRepository.dismiss(it)
                         SoundFeedback.play(context, CommandSound.Confirm)
@@ -524,10 +588,12 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 else -> false
             }
         }
-        onDispose { HubKeyBridge.navigate = null }
+        if (isActiveSurface) HubKeyBridge.registerNavigate(keyBridgeOwner, navigationHandler)
+        onDispose { HubKeyBridge.unregisterNavigate(keyBridgeOwner) }
     }
 
-    Box(Modifier.fillMaxSize().background(palette.background).statusBarsPadding().padding(8.dp), contentAlignment = Alignment.TopCenter) {
+    Box(Modifier.fillMaxSize().background(if (glass) Color.Transparent else Color.Black), contentAlignment = Alignment.TopCenter) {
+    Box(Modifier.fillMaxSize().background(palette.background).padding(8.dp), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(palette.panel)
                 .border(1.dp, palette.border, RoundedCornerShape(24.dp)).padding(20.dp),
@@ -543,9 +609,9 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     modifier = Modifier.alignByBaseline().padding(start = 8.dp),
                 )
                 Spacer(Modifier.weight(1f))
-                Row(Modifier.height(34.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.height(32.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        Modifier.height(32.dp).offset(y = 2.dp).clickable { managing = !managing }.padding(horizontal = 8.dp),
+                        Modifier.height(32.dp).clickable { managing = !managing }.padding(horizontal = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -571,20 +637,22 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                         )
                     }
                     Box(
-                        Modifier.size(32.dp).clip(CircleShape).clickable {
+                        Modifier.height(32.dp).clip(RoundedCornerShape(10.dp)).clickable {
                             context.startActivity(Intent(context, SettingsActivity::class.java))
-                        }.padding(7.dp),
+                        }.padding(horizontal = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Settings,
-                            contentDescription = "Open Commander Settings",
-                            tint = palette.secondary,
-                            modifier = Modifier.size(18.dp).offset(y = 1.dp),
+                        Text(
+                            "settings",
+                            color = palette.secondary,
+                            fontFamily = HubMono,
+                            fontSize = 12.sp,
+                            lineHeight = 12.sp,
+                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
                         )
                     }
                     Box(
-                        Modifier.height(32.dp).clickable { onDismiss() }.padding(start = 8.dp),
+                        Modifier.height(32.dp).clickable { onDismiss() }.padding(horizontal = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -598,21 +666,50 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     }
                 }
             }
+            val filterScroll = rememberScrollState()
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 6.dp).horizontalScroll(rememberScrollState())
+                Modifier.fillMaxWidth().padding(horizontal = 6.dp).horizontalScroll(filterScroll)
                     .padding(top = 14.dp, bottom = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 filters.forEach { entry ->
+                    val filterBringIntoView = remember(entry) { BringIntoViewRequester() }
+                    val selected = customFilterId == null && filter == entry
+                    LaunchedEffect(selected, filters) {
+                        if (selected) {
+                            delay(45)
+                            filterBringIntoView.bringIntoView()
+                        }
+                    }
                     Text(
                         entry.label,
-                        color = if (filter == entry) Color.White else palette.secondary,
+                        color = if (selected) Color.White else palette.secondary,
                         fontFamily = HubMono,
                         fontSize = 12.sp,
-                        modifier = Modifier.clip(RoundedCornerShape(20.dp))
-                            .background(if (filter == entry) HubAccent else Color.Transparent)
-                            .border(1.dp, if (filter == entry) HubAccent else palette.border, RoundedCornerShape(20.dp))
-                            .clickable { filter = entry }.padding(horizontal = 11.dp, vertical = 5.dp),
+                        modifier = Modifier.bringIntoViewRequester(filterBringIntoView)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (selected) HubAccent else Color.Transparent)
+                            .border(1.dp, if (selected) HubAccent else palette.border, RoundedCornerShape(20.dp))
+                            .clickable { filter = entry; customFilterId = null }.padding(horizontal = 11.dp, vertical = 5.dp),
+                    )
+                }
+                customCategories.forEach { category ->
+                    val selected = customFilterId == category.id
+                    val filterBringIntoView = remember(category.id) { BringIntoViewRequester() }
+                    LaunchedEffect(selected, customCategories) {
+                        if (selected) { delay(45); filterBringIntoView.bringIntoView() }
+                    }
+                    Text(
+                        category.label,
+                        color = if (selected) Color.White else palette.secondary,
+                        fontFamily = HubMono,
+                        fontSize = 12.sp,
+                        modifier = Modifier.bringIntoViewRequester(filterBringIntoView)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (selected) HubAccent else Color.Transparent)
+                            .border(1.dp, if (selected) HubAccent else palette.border, RoundedCornerShape(20.dp))
+                            .clickable { customFilterId = category.id }
+                            .padding(horizontal = 11.dp, vertical = 5.dp),
                     )
                 }
                 Spacer(Modifier.width(12.dp))
@@ -625,7 +722,28 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     .verticalScroll(notificationScroll),
             ) {
                 if (managing) {
-                    HubCategoryManager(allItems, categoryOverrides, palette, ::cycleCategory)
+                    HubCategoryManager(
+                        allItems, categoryOverrides, customCategories, palette, ::cycleCategory,
+                        onCreate = { label ->
+                            val category = HubCustomCategories.create(label)
+                            customCategories = customCategories + category
+                            HubCustomCategories.save(context, customCategories)
+                        },
+                        onRename = { id, label ->
+                            customCategories = customCategories.map {
+                                if (it.id == id) it.copy(label = label.trim()) else it
+                            }
+                            HubCustomCategories.save(context, customCategories)
+                        },
+                        onDelete = { category ->
+                            customCategories = customCategories.filterNot { it.id == category.id }
+                            HubCustomCategories.save(context, customCategories)
+                            val affected = categoryOverrides.filterValues { it == category.id }.keys
+                            categoryOverrides = categoryOverrides - affected
+                            categoryPrefs.edit().apply { affected.forEach(::remove) }.apply()
+                            if (customFilterId == category.id) customFilterId = null
+                        },
+                    )
                     Spacer(Modifier.height(24.dp))
                     HubIgnoredManager(palette) { rule ->
                         HubIgnoreSettings.remove(context, rule.id)
@@ -639,25 +757,13 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                     displayedVisible.take(50).forEachIndexed { index, item ->
                         key(item.key) {
                             val bringIntoViewRequester = remember { BringIntoViewRequester() }
-                            val dismissState = rememberSwipeToDismissBoxState()
-                            LaunchedEffect(index == selectedIndex, expandedKey == item.key) {
-                                if (index == selectedIndex || expandedKey == item.key) {
+                            LaunchedEffect(isActiveSurface, index == selectedIndex, expandedKey == item.key) {
+                                if (isActiveSurface && (index == selectedIndex || expandedKey == item.key)) {
                                     delay(40)
                                     bringIntoViewRequester.bringIntoView()
                                     if (index == displayedVisible.take(50).lastIndex) {
                                         notificationScroll.scrollTo(notificationScroll.maxValue)
                                     }
-                                }
-                            }
-                            LaunchedEffect(dismissState.currentValue) {
-                                when (dismissState.currentValue) {
-                                    SwipeToDismissBoxValue.EndToStart -> HubRepository.dismiss(item)
-                                    SwipeToDismissBoxValue.StartToEnd -> {
-                                        toggleFlag(item.key)
-                                        SoundFeedback.play(context, CommandSound.Step)
-                                        dismissState.reset()
-                                    }
-                                    SwipeToDismissBoxValue.Settled -> Unit
                                 }
                             }
                             Box(
@@ -672,27 +778,57 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                                         .border(4.dp, HubAccent.copy(alpha = .9f), RoundedCornerShape(16.dp)),
                                 )
                             }
-                            if (rowConfirmation?.item?.key == item.key) {
+                            AnimatedContent(
+                                targetState = swipeActionsKey == item.key,
+                                transitionSpec = {
+                                    if (targetState) {
+                                        (slideInHorizontally(tween(210)) { -it / 3 } + fadeIn(tween(170))) togetherWith
+                                            (slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(130)))
+                                    } else {
+                                        (slideInHorizontally(tween(210)) { it / 3 } + fadeIn(tween(170))) togetherWith
+                                            (slideOutHorizontally(tween(180)) { -it / 4 } + fadeOut(tween(130)))
+                                    }
+                                },
+                                label = "Hub swipe actions",
+                            ) { actionsOpen ->
+                            if (actionsOpen) {
+                                HubSwipeActions(
+                                    flagged = item.key in flaggedKeys,
+                                    palette = palette,
+                                    onFlag = { toggleFlag(item.key); swipeActionsKey = null },
+                                    onDismiss = { HubRepository.dismiss(item); swipeActionsKey = null },
+                                    onCancel = {
+                                        scope.launch {
+                                            delay(120)
+                                            swipeActionsKey = null
+                                        }
+                                    },
+                                )
+                            } else if (rowConfirmation?.item?.key == item.key) {
                                 HubRowConfirmationCard(rowConfirmation!!, palette)
-                            } else SwipeToDismissBox(
-                                modifier = Modifier.wrapContentHeight(unbounded = true),
-                                state = dismissState,
-                                enableDismissFromStartToEnd = true,
-                                backgroundContent = {
-                                    val flagging = dismissState.targetValue == SwipeToDismissBoxValue.StartToEnd
-                                    Box(
-                                        Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(HubAccent.copy(alpha = .16f))
-                                            .padding(start = 20.dp, end = 20.dp),
-                                        contentAlignment = if (flagging) Alignment.CenterStart else Alignment.CenterEnd,
-                                    ) {
-                                        Text(
-                                            if (flagging) {
-                                                if (item.key in flaggedKeys) "unflag" else "flag"
-                                            } else "dismiss",
-                                            color = HubAccent,
-                                            fontFamily = HubMono,
-                                            fontSize = 12.sp,
-                                        )
+                            } else Box(
+                                Modifier.wrapContentHeight(unbounded = true).pointerInput(item.key) {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        var claimed = false
+                                        var distance = 0f
+                                        val slop = awaitHorizontalTouchSlopOrCancellation(down.id) { change, over ->
+                                            if (over > 0f) {
+                                                claimed = true
+                                                distance = over
+                                                change.consume()
+                                            }
+                                        }
+                                        if (slop != null && claimed) {
+                                            horizontalDrag(slop.id) { change ->
+                                                distance += change.positionChange().x
+                                                change.consume()
+                                            }
+                                            if (distance > size.width * .12f) {
+                                                swipeActionsKey = item.key
+                                                SoundFeedback.play(context, CommandSound.Step)
+                                            }
+                                        }
                                     }
                                 },
                             ) {
@@ -714,6 +850,10 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                                         expandedKey = if (expandedKey == item.key) null else item.key
                                     },
                                     onLongPress = { openActions(item) },
+                                    onToggleFlag = {
+                                        toggleFlag(item.key)
+                                        SoundFeedback.play(context, CommandSound.Step)
+                                    },
                                     onMarkRead = { markRead(item) },
                                     onToggleReply = {
                                         markRead(item)
@@ -753,6 +893,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                                         }
                                     },
                                 )
+                            }
                             }
                             }
                         }
@@ -824,7 +965,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
             HubActionsPrompt(
                 item = item,
                 palette = palette,
-                entries = item.actionEntries(item.key in flaggedKeys),
+                entries = item.actionEntries(item.key in flaggedKeys, item.key in importantKeys),
                 selectedIndex = actionMenuIndex,
                 confirmation = actionConfirmation,
                 result = actionResult,
@@ -834,6 +975,7 @@ fun MinimalHubApp(hasAccess: Boolean, openAccessSettings: () -> Unit, onDismiss:
                 onActivate = { performAction(item, it) },
             )
         }
+    }
     }
 }
 
@@ -880,9 +1022,10 @@ private fun HubReplyPopup(
             Text("reply", color = palette.secondary, fontFamily = HubMono, fontSize = 11.sp)
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                if (HubSettings.showNotificationImages.value && item.displayImage != null) {
+                val displayImage = HubImageCache.get(item.displayImageKey)
+                if (HubSettings.showNotificationImages.value && displayImage != null) {
                     Image(
-                        bitmap = item.displayImage.asImageBitmap(),
+                        bitmap = displayImage.asImageBitmap(),
                         contentDescription = null,
                         colorFilter = when {
                             item.displayImageIsMonochrome -> ColorFilter.tint(HubAccent, BlendMode.SrcIn)
@@ -977,12 +1120,79 @@ private fun HubReplyPopup(
 private fun HubCategoryManager(
     items: List<HubItem>,
     overrides: Map<String, String>,
+    customCategories: List<HubCustomCategory>,
     palette: HubPalette,
     cycle: (String) -> Unit,
+    onCreate: (String) -> Unit,
+    onRename: (String, String) -> Unit,
+    onDelete: (HubCustomCategory) -> Unit,
 ) {
+    var categoryDraft by remember { mutableStateOf("") }
+    var renamingId by remember { mutableStateOf<String?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
     val apps = remember(items) { items.distinctBy { it.packageName }.sortedBy { it.appName.lowercase() } }
+    Text("custom categories", color = palette.text, fontFamily = HubSans,
+        fontWeight = FontWeight.Bold, fontSize = 17.sp)
+    Row(
+        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicTextField(
+            value = categoryDraft,
+            onValueChange = { categoryDraft = it.take(28) },
+            singleLine = true,
+            textStyle = TextStyle(color = palette.text, fontFamily = HubMono, fontSize = 13.sp),
+            cursorBrush = SolidColor(HubAccent),
+            decorationBox = { inner ->
+                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(11.dp)).background(palette.tile)
+                    .border(1.dp, palette.border, RoundedCornerShape(11.dp)).padding(11.dp)) {
+                    if (categoryDraft.isBlank()) Text("new category name", color = palette.secondary,
+                        fontFamily = HubMono, fontSize = 12.sp)
+                    inner()
+                }
+            },
+            modifier = Modifier.weight(1f),
+        )
+        Text("ADD", color = if (categoryDraft.isBlank()) palette.secondary else HubAccent,
+            fontFamily = HubMono, fontSize = 12.sp,
+            modifier = Modifier.padding(start = 10.dp).clickable(enabled = categoryDraft.isNotBlank()) {
+                onCreate(categoryDraft)
+                categoryDraft = ""
+            }.padding(8.dp))
+    }
+    customCategories.forEach { category ->
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 7.dp).clip(RoundedCornerShape(12.dp))
+                .background(palette.tile).border(1.dp, palette.border, RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (renamingId == category.id) {
+                BasicTextField(renameDraft, { renameDraft = it.take(28) }, singleLine = true,
+                    textStyle = TextStyle(color = palette.text, fontFamily = HubMono, fontSize = 13.sp),
+                    cursorBrush = SolidColor(HubAccent), modifier = Modifier.weight(1f))
+                Text("SAVE", color = HubAccent, fontFamily = HubMono, fontSize = 11.sp,
+                    modifier = Modifier.clickable(enabled = renameDraft.isNotBlank()) {
+                        onRename(category.id, renameDraft)
+                        renamingId = null
+                    }.padding(6.dp))
+            } else {
+                Text(category.label, color = palette.text, fontFamily = HubMono, fontSize = 13.sp,
+                    modifier = Modifier.weight(1f))
+                Text("rename", color = palette.secondary, fontFamily = HubMono, fontSize = 10.sp,
+                    modifier = Modifier.clickable {
+                        renamingId = category.id
+                        renameDraft = category.label
+                    }.padding(6.dp))
+                Text("×", color = HubAccent, fontFamily = HubMono, fontSize = 16.sp,
+                    modifier = Modifier.clickable { onDelete(category) }.padding(start = 6.dp))
+            }
+        }
+    }
+    Spacer(Modifier.height(14.dp))
     if (apps.isEmpty()) {
-        Text("apps appear here after they post a notification", color = palette.secondary, fontFamily = HubMono, fontSize = 12.sp, modifier = Modifier.padding(vertical = 24.dp))
+        Text("apps appear here after they post a notification", color = palette.secondary,
+            fontFamily = HubMono, fontSize = 12.sp, modifier = Modifier.padding(vertical = 24.dp))
         return
     }
     Text("tap an app to change its category", color = palette.secondary, fontFamily = HubMono, fontSize = 11.sp, modifier = Modifier.padding(bottom = 10.dp))
@@ -1106,6 +1316,14 @@ private fun HubActionsPrompt(
                         HubActionEntry.Open -> "open ${item.appName}"
                         HubActionEntry.Reply -> "reply without leaving Hub"
                         is HubActionEntry.Flag -> if (entry.flagged) "remove from favourites" else "save to favourites"
+                        is HubActionEntry.Important -> if (entry.important) "return to normal priority" else "show in Important"
+                        is HubActionEntry.ImportantSource -> if (entry.active) {
+                            "future matching notifications return to normal priority"
+                        } else when (entry.rule.kind) {
+                            "conversation" -> "prioritise this person or conversation in future"
+                            "type" -> "prioritise this notification type in future"
+                            else -> "prioritise every notification from this app"
+                        }
                         is HubActionEntry.NotificationAction -> if (entry.action.destructive && confirmation == entry.action) "press again to confirm" else "action provided by ${item.appName}"
                         HubActionEntry.Snooze -> "hide this notification for 1 hour"
                         HubActionEntry.Dismiss -> "remove this notification"
@@ -1199,6 +1417,50 @@ private fun HubRowConfirmationCard(confirmation: HubRowConfirmation, palette: Hu
 }
 
 @Composable
+private fun HubSwipeActions(
+    flagged: Boolean,
+    palette: HubPalette,
+    onFlag: () -> Unit,
+    onDismiss: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().height(78.dp).clip(RoundedCornerShape(16.dp))
+            .background(palette.tile).border(1.dp, HubAccent.copy(alpha = .46f), RoundedCornerShape(16.dp))
+            .padding(7.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Row(
+            Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(12.dp))
+                .background(HubAccent.copy(alpha = .16f)).clickable(onClick = onFlag),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(if (flagged) Icons.Outlined.Star else Icons.Outlined.StarOutline, null, tint = HubAccent, modifier = Modifier.size(20.dp))
+            Text(if (flagged) "unflag" else "flag", color = palette.text, fontFamily = HubMono, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+        }
+        Row(
+            Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFFB3261E).copy(alpha = .20f)).clickable(onClick = onDismiss),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(Icons.Outlined.DeleteOutline, null, tint = Color(0xFFFF766C), modifier = Modifier.size(20.dp))
+            Text("dismiss", color = palette.text, fontFamily = HubMono, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+        }
+        Row(
+            Modifier.weight(.72f).fillMaxHeight().clip(RoundedCornerShape(12.dp))
+                .background(palette.border.copy(alpha = .34f)).clickable(onClick = onCancel),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(Icons.Outlined.Close, null, tint = palette.secondary, modifier = Modifier.size(20.dp))
+            Text("cancel", color = palette.text, fontFamily = HubMono, fontSize = 12.sp, modifier = Modifier.padding(start = 7.dp))
+        }
+    }
+}
+
+@Composable
 private fun HubAccessCard(palette: HubPalette, openSettings: () -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.tile)
@@ -1226,6 +1488,7 @@ private fun HubNotificationCard(
     replyStatus: String?,
     onToggleExpanded: () -> Unit,
     onLongPress: () -> Unit,
+    onToggleFlag: () -> Unit,
     onMarkRead: () -> Unit,
     onToggleReply: () -> Unit,
     onReplyTextChange: (String) -> Unit,
@@ -1236,6 +1499,9 @@ private fun HubNotificationCard(
         Instant.ofEpochMilli(item.time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
     }
     val primaryTitle = remember(item) { item.primaryHubTitle() }
+    val appNameColor = remember(item.packageName, HubSettings.appNameIconColor.value) {
+        if (HubSettings.appNameIconColor.value) context.hubAppNameColor(item.packageName) else null
+    }
     val focusRequester = remember(item.key) { FocusRequester() }
     LaunchedEffect(replying) { if (replying) focusRequester.requestFocus() }
     Column(
@@ -1284,9 +1550,10 @@ private fun HubNotificationCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (showNotificationImage && !notificationImageOnRight && item.displayImage != null) {
+                    val displayImage = HubImageCache.get(item.displayImageKey)
+                    if (showNotificationImage && !notificationImageOnRight && displayImage != null) {
                         Image(
-                            bitmap = item.displayImage.asImageBitmap(),
+                            bitmap = displayImage.asImageBitmap(),
                             contentDescription = null,
                             colorFilter = when {
                                 item.displayImageIsMonochrome -> ColorFilter.tint(HubAccent, BlendMode.SrcIn)
@@ -1332,12 +1599,24 @@ private fun HubNotificationCard(
             ) {
             Column(horizontalAlignment = Alignment.End) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(27.dp).clip(CircleShape).clickable(onClick = onToggleFlag),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (flagged) Icons.Outlined.Flag else Icons.Outlined.OutlinedFlag,
+                            contentDescription = if (flagged) "Unflag" else "Flag",
+                            tint = if (flagged) HubAccent else palette.secondary,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
                     Box(Modifier.padding(end = 5.dp).size(6.dp), contentAlignment = Alignment.Center) {
                         if (unread) Box(Modifier.size(5.dp).clip(CircleShape).background(HubAccent))
                     }
-                    if (showNotificationImage && notificationImageOnRight && item.displayImage != null) {
+                    val displayImage = HubImageCache.get(item.displayImageKey)
+                    if (showNotificationImage && notificationImageOnRight && displayImage != null) {
                         Image(
-                            bitmap = item.displayImage.asImageBitmap(),
+                            bitmap = displayImage.asImageBitmap(),
                             contentDescription = null,
                             colorFilter = when {
                                 item.displayImageIsMonochrome -> ColorFilter.tint(HubAccent, BlendMode.SrcIn)
@@ -1367,7 +1646,7 @@ private fun HubNotificationCard(
                         if (!item.appName.equals(primaryTitle, ignoreCase = true)) {
                             Text(
                                 item.appName,
-                                color = palette.secondary,
+                                color = appNameColor ?: palette.secondary,
                                 fontFamily = HubMono,
                                 fontSize = 9.sp,
                                 maxLines = 1,
@@ -1424,6 +1703,33 @@ private fun HubNotificationCard(
             }
         }
     }
+}
+
+private val hubAppNameColorCache = mutableMapOf<String, Color>()
+
+private fun android.content.Context.hubAppNameColor(packageName: String): Color? {
+    synchronized(hubAppNameColorCache) { hubAppNameColorCache[packageName]?.let { return it } }
+    val color = runCatching {
+        val bitmap = packageManager.getApplicationIcon(packageName).toBitmap(32, 32)
+        val hsv = FloatArray(3)
+        var bestScore = -1f
+        var best = android.graphics.Color.WHITE
+        for (y in 0 until bitmap.height step 2) for (x in 0 until bitmap.width step 2) {
+            val pixel = bitmap.getPixel(x, y)
+            if (android.graphics.Color.alpha(pixel) < 150) continue
+            android.graphics.Color.colorToHSV(pixel, hsv)
+            val score = hsv[1] * (.45f + hsv[2])
+            if (score > bestScore && hsv[2] > .22f) {
+                bestScore = score
+                best = android.graphics.Color.HSVToColor(
+                    floatArrayOf(hsv[0], hsv[1].coerceIn(.42f, .78f), hsv[2].coerceIn(.72f, .96f)),
+                )
+            }
+        }
+        Color(best)
+    }.getOrNull() ?: return null
+    synchronized(hubAppNameColorCache) { hubAppNameColorCache[packageName] = color }
+    return color
 }
 
 private fun activateHubItem(context: android.content.Context, item: HubItem, onMarkRead: () -> Unit, onReply: () -> Unit) {
@@ -1489,7 +1795,7 @@ private fun HubNotificationAction.successLabel(): String {
     }
 }
 
-private fun HubItem.matches(filter: HubFilter, flaggedKeys: Set<String>, overrides: Map<String, String>): Boolean = when (filter) {
+private fun HubItem.matches(filter: HubFilter, flaggedKeys: Set<String>, importantKeys: Set<String>, overrides: Map<String, String>): Boolean = when (filter) {
     HubFilter.All -> !isSummary
     HubFilter.Messages -> !isSummary && effectiveCategory(overrides) == "messages"
     HubFilter.Calls -> !isSummary && effectiveCategory(overrides) == "calls"
@@ -1497,11 +1803,14 @@ private fun HubItem.matches(filter: HubFilter, flaggedKeys: Set<String>, overrid
     HubFilter.Finance -> !isSummary && effectiveCategory(overrides) == "finance"
     HubFilter.Tasks -> !isSummary && effectiveCategory(overrides) == "tasks"
     HubFilter.Apps -> !isSummary && effectiveCategory(overrides) == "apps"
+    HubFilter.Important -> !isSummary && (
+        key in importantKeys || sourceKeys.any(importantKeys::contains) || HubImportantSettings.matches(this)
+    )
     HubFilter.Flagged -> !isSummary && key in flaggedKeys
     HubFilter.Summaries -> isSummary
 }
 
-private fun HubItem.effectiveCategory(overrides: Map<String, String>): String {
+internal fun HubItem.effectiveCategory(overrides: Map<String, String>): String {
     overrides[packageName]?.let { return it }
     return when {
         isFinance() -> "finance"

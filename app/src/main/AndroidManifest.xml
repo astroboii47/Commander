@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Android grants this only through the user-facing Usage Access screen. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
@@ -12,6 +18,9 @@
     <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
 
     <queries>
+        <intent>
+            <action android:name="android.intent.action.ASSIST" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -39,6 +48,8 @@
         <package android:name="pl.solidexplorer2" />
         <package android:name="com.ebay.mobile" />
         <package android:name="org.mozilla.focus" />
+        <package android:name="org.mozilla.klar" />
+        <package android:name="com.duckduckgo.mobile.android" />
         <package android:name="company.thebrowser.arc" />
         <package android:name="com.amazon.mShop.android.shopping" />
         <package android:name="moe.zhs.caffeine" />
@@ -72,20 +83,21 @@
             android:label="Messaging contacts" />
         <activity
             android:name=".MainActivity"
+            android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:finishOnTaskLaunch="true"
             android:icon="@drawable/ic_commander_home"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:label="Commander Home"
-            android:screenOrientation="unspecified">
+            android:resizeableActivity="true"
+            android:screenOrientation="unspecified"
+            android:theme="@style/Theme.MinimalCommand.Launcher"
+            android:windowSoftInputMode="adjustPan">
             <intent-filter>
                 <action android:name="com.astroboii47.commander.OPEN" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
-        <!-- Keep Home usable internally while allowing a release build to hide
-             only its launcher entry by setting commander_home_launcher_enabled false. -->
         <activity-alias
             android:name=".CommanderHomeLauncherAlias"
             android:enabled="@bool/commander_home_launcher_enabled"
@@ -97,12 +109,19 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity-alias>
         <activity
             android:name=".OverlayActivity"
             android:configChanges="density|keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize"
             android:excludeFromRecents="true"
             android:exported="true"
+            android:icon="@drawable/ic_commander_bar"
+            android:label="Commander Bar"
             android:launchMode="singleTop"
             android:taskAffinity="com.astroboii47.commander.overlay"
             android:theme="@style/Theme.MinimalCommand.Overlay">
@@ -110,7 +129,32 @@
                 <action android:name="com.astroboii47.commander.OPEN_OVERLAY" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="com.astroboii47.commander.OPEN_COMMAND_BAR" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- Lets Android offer Commander as a default assistant. The OS,
+                 not Commander, decides which navigation gestures invoke it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
         </activity>
+        <receiver
+            android:name=".CommandBarWidgetProvider"
+            android:exported="true"
+            android:label="Commander Bar">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/command_bar_widget_info" />
+        </receiver>
         <activity
             android:name=".SwitcherActivity"
             android:excludeFromRecents="true"
@@ -121,10 +165,6 @@
             android:noHistory="true"
             android:taskAffinity="com.astroboii47.commander.overlay"
             android:theme="@android:style/Theme.NoDisplay">
-            <intent-filter android:priority="-10">
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <intent-filter>
                 <action android:name="com.astroboii47.commander.OPEN_SWITCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -156,9 +196,19 @@
             android:taskAffinity="com.astroboii47.commander.overlay"
             android:theme="@android:style/Theme.NoDisplay">
             <intent-filter>
-                <action android:name="com.astroboii47.commander.OPEN_COMMAND_BAR" />
+                <action android:name="android.intent.action.CREATE_SHORTCUT" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+        </activity>
+        <activity
+            android:name=".CommanderHomeShortcutActivity"
+            android:enabled="@bool/commander_home_launcher_enabled"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:icon="@drawable/ic_commander_home"
+            android:label="Commander Home"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
             <intent-filter>
                 <action android:name="android.intent.action.CREATE_SHORTCUT" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -209,11 +259,8 @@
             android:icon="@drawable/ic_commander_hub"
             android:label="Commander Hub"
             android:theme="@style/Theme.MinimalCommand.Hub" />
-        <activity
-            android:name=".HubHistoryActivity"
-            android:exported="false"
-            android:label="Hub history"
-            android:theme="@style/Theme.MinimalCommand.Hub" />
+        <!-- Keep the original launcher component for third-party launchers
+             that saved it as a gesture or app shortcut before Home was added. -->
         <activity-alias
             android:name=".CommanderHubLauncherAlias"
             android:exported="true"
@@ -225,6 +272,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
+        <activity
+            android:name=".AppsActivity"
+            android:exported="true"
+            android:label="Commander Apps"
+            android:theme="@style/Theme.MinimalCommand.Hub" />
+        <activity
+            android:name=".HubHistoryActivity"
+            android:exported="false"
+            android:label="Hub history"
+            android:theme="@style/Theme.MinimalCommand.Hub" />
+        <activity
+            android:name=".WallpaperPickerActivity"
+            android:exported="false"
+            android:label="Wallpaper library"
+            android:theme="@style/Theme.MinimalCommand.Hub" />
         <service
             android:name=".HubNotificationService"
             android:exported="false"

@@ -266,9 +266,9 @@ private fun CommandInput(
 @Composable
 private fun CommandLegend(active: CommandKind, palette: Palette) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        CommandKind.entries.filter { commandSymbol(it) != null }.forEach { kind ->
+        CommandKind.entries.filter { commandTrigger(it).isNotEmpty() }.forEach { kind ->
             Text(
-                text = if (commandSymbol(kind) == ' ') "␠" else commandSymbol(kind).toString(),
+                text = if (commandTrigger(kind) == " ") "␠" else commandTrigger(kind),
                 color = if (kind == active) Accent else palette.secondary,
                 fontFamily = CourierPrime,
                 fontWeight = FontWeight.Bold,
@@ -384,7 +384,7 @@ private fun CommandPreview(command: ParsedCommand, palette: Palette, onExecute: 
             .border(1.dp, Accent.copy(alpha = .65f), RoundedCornerShape(13.dp)).clickable(onClick = onExecute).padding(16.dp),
     ) {
         Text(
-            "${commandSymbol(command.kind) ?: ""}${command.text}",
+            "${commandTrigger(command.kind)}${command.text}",
             color = palette.text,
             fontFamily = CourierPrime,
             fontWeight = FontWeight.Bold,

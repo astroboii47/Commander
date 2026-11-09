@@ -29,6 +29,21 @@ abstract class CommanderShortcutActivity : Activity() {
     }
 }
 
+/**
+ * Stable activity shortcut for third-party launchers.  Unlike an Android
+ * pinned/dynamic shortcut this does not require the calling launcher to be
+ * the current shortcut host, so it continues to work when Commander itself
+ * is the default HOME app.
+ */
+class CommanderHomeShortcutActivity : CommanderShortcutActivity() {
+    override val shortcutName = "Commander Home"
+    override val shortcutIcon = R.drawable.ic_commander_home
+    override fun launchIntent() = Intent(MainActivity.ACTION_SHOW_SURFACE)
+        .setClass(this, MainActivity::class.java)
+        .putExtra(MainActivity.EXTRA_SURFACE, MainActivity.SURFACE_HOME)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+}
+
 class CommanderHubShortcutActivity : CommanderShortcutActivity() {
     override val shortcutName = "Commander Hub"
     override val shortcutIcon = R.drawable.ic_commander_hub

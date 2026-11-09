@@ -82,7 +82,8 @@ class CommandEngine(private val activity: Activity) {
             if ("commander hub".contains(needle) || "hub".startsWith(needle)) {
                 add(AppResult("Commander Hub", INTERNAL_HUB, null))
             }
-            if ("commander home".contains(needle) || "home".startsWith(needle)) {
+            if (ModuleSettings.homeAvailable(activity) && ModuleSettings.homeEnabled.value &&
+                ("commander home".contains(needle) || "home".startsWith(needle))) {
                 add(AppResult("Commander Home", INTERNAL_HOME, null))
             }
             if ("commander settings".contains(needle) || "settings".startsWith(needle)) {
@@ -108,7 +109,7 @@ class CommandEngine(private val activity: Activity) {
             AppResult(label = it.label, packageName = it.packageName, icon = null)
         }).distinctBy { it.packageName }.take(limit)
         return if (matches.isEmpty() && needle.isNotBlank() && includeWebFallback && AppSearchSettings.webFallback.value) {
-            listOf(AppResult("Search web for “${query.trim()}”", INTERNAL_WEB + Uri.encode(query.trim()), null))
+            listOf(AppResult("Search the web", INTERNAL_WEB + Uri.encode(query.trim()), null))
         } else matches
     }
 
@@ -157,7 +158,7 @@ class CommandEngine(private val activity: Activity) {
     fun webFallbackResult(query: String): AppResult? {
         val value = query.trim()
         return if (value.isNotEmpty() && AppSearchSettings.webFallback.value) {
-            AppResult("Search web for “$value”", INTERNAL_WEB + Uri.encode(value), null)
+            AppResult("Search the web", INTERNAL_WEB + Uri.encode(value), null)
         } else null
     }
 
@@ -561,7 +562,7 @@ class CommandEngine(private val activity: Activity) {
                             label = ContactsContract.CommonDataKinds.Phone.getTypeLabel(activity.resources, type, "phone").toString()
                                 .lowercase().let { typeLabel ->
                                     if (includeMessenger) listOf(
-                                        "SMS",
+                                        "Messages",
                                         phoneBookName,
                                         typeLabel,
                                         if (directSmsEnabled()) "direct send" else "open composer",
@@ -569,6 +570,7 @@ class CommandEngine(private val activity: Activity) {
                                     else typeLabel
                                 },
                             messagingPlatform = if (includeMessenger) "SMS" else null,
+                            messagingRouteTitle = if (includeMessenger) phoneBookName else null,
                             messagingPlatformIcon = null,
                             commanderMessagingContactId = commanderContact?.id,
                             messagingIsDefault = commanderContact?.defaultIdentity?.let { defaultIdentity ->
@@ -640,7 +642,7 @@ class CommandEngine(private val activity: Activity) {
                     label = listOf(item.appName, "reply available", item.text.take(48).takeIf(String::isNotBlank))
                         .filterNotNull()
                         .joinToString(" · "),
-                    avatar = item.displayImage,
+                    avatar = HubImageCache.get(item.displayImageKey),
                     hubNotificationKey = item.key,
                     messagingIdentity = CommanderMessagingContacts.identity(
                         item.packageName,
@@ -777,7 +779,10 @@ class CommandEngine(private val activity: Activity) {
         CommandKind.Timer -> setTimer(command.text)
         CommandKind.Calculator -> calculate(command.text)
         CommandKind.Web -> searchWeb(command.text)
-        CommandKind.Note -> shareToPackage(command.text, "com.google.android.keep", "Google Keep")
+        CommandKind.Note -> {
+            RecentNoteStore.save(activity.applicationContext, command.text)
+            shareToPackage(command.text, "com.google.android.keep", "Google Keep")
+        }
         CommandKind.Call -> call(command.text)
         CommandKind.Message -> message(command.text)
         CommandKind.Ask -> if (command.text.startsWith('?')) askChatGpt(command.text) else "Ask is handled in Command"
@@ -895,10 +900,7 @@ class CommandEngine(private val activity: Activity) {
 
     private fun searchWeb(text: String): String? {
         if (text.isBlank()) return "Type a search after /"
-        val target = if (Regex("(?i)^https?://").containsMatchIn(text)) text else {
-            "https://www.google.com/search?q=" + URLEncoder.encode(text, StandardCharsets.UTF_8.toString())
-        }
-        return startOrFallback(Intent(Intent.ACTION_VIEW, Uri.parse(target)), null, "No browser is installed")
+        return WebSearchLauncher.openQuick(activity, text)
     }
 
     private fun askChatGpt(text: String): String? {
@@ -936,6 +938,10 @@ class CommandEngine(private val activity: Activity) {
             INTERNAL_QUICK_CONTROLS, INTERNAL_APP_SHORTCUTS -> return "Open this category from Commander"
             else -> if (app.packageName.startsWith(INTERNAL_WEB)) {
                 return searchWeb(Uri.decode(app.packageName.removePrefix(INTERNAL_WEB)))
+            } else if (app.packageName.startsWith(INTERNAL_WEB_PRIVATE)) {
+                return WebSearchLauncher.openPrivately(activity, Uri.decode(app.packageName.removePrefix(INTERNAL_WEB_PRIVATE)))
+            } else if (app.packageName.startsWith(INTERNAL_WEB_FULL)) {
+                return WebSearchLauncher.openNormally(activity, Uri.decode(app.packageName.removePrefix(INTERNAL_WEB_FULL)))
             } else packageManager.getLaunchIntentForPackage(app.packageName) ?: return "App cannot be opened"
         }
         startActivityAndFinish(intent)
@@ -950,11 +956,13 @@ class CommandEngine(private val activity: Activity) {
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
         )
 
-    private companion object {
+    companion object {
         const val INTERNAL_HUB = "internal:minimal-hub"
         const val INTERNAL_HOME = "internal:command-home"
         const val INTERNAL_SETTINGS = "internal:command-settings"
         const val INTERNAL_WEB = "internal:web-search:"
+        const val INTERNAL_WEB_PRIVATE = "internal:web-search-private:"
+        const val INTERNAL_WEB_FULL = "internal:web-search-full:"
         const val INTERNAL_ALL_APPS = "internal:all-apps"
         const val INTERNAL_RECENT_APPS = "internal:recent-apps"
         const val INTERNAL_SWITCHER = "internal:switcher"

@@ -25,6 +25,8 @@ Commander makes network requests only when the user invokes a network-backed fea
 - Gemini prompts and conversation history are sent to Google’s Gemini API using the user’s API key.
 - Direct Todoist tasks are sent to Todoist using the user’s personal token.
 - Search aliases and web search open the selected app or service with the typed query.
+- When optional web-search previews are enabled, the current web query is sent to Google Suggest to retrieve live query suggestions. This is disabled by default.
+- Quick web search opens the result in a browser Custom Tab. Private search is handed to a supported installed privacy browser; Commander does not implement or claim its own private-browsing session.
 - ChatGPT prompts are handed to the installed ChatGPT app when that command is used.
 
 Those services process data under their own terms and privacy policies. Commander does not operate a server or receive a copy of these requests.

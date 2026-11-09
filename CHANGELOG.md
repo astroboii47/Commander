@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.1.0-alpha.7
+
+### Added
+
+- Added touch-friendly trigger pills above Commander Bar and support for multiple custom triggers per command, including word and symbol triggers.
+- Added trigger recognition at the beginning, end, or inline within supported commands, while preserving natural-language task date parsing after an inline trigger.
+- Added a minimal 1×1 Commander Bar home-screen widget with a translucent Nothing-inspired treatment.
+- Added optional live web-search suggestions, dismissible quick-search Custom Tabs, private-browser hand-off, and full-browser actions.
+- Added direct split-pair workflows for choosing two apps, splitting the active app with a selected app, and a faster Recents-assisted split-screen path on supported devices.
+- Added configurable assistant-gesture routing so supported invocation types can open Commander Bar or a user-selected app.
+- Added a configurable bottom-navigation long-hold gesture for invoking Commander on devices where the system gesture cannot be reassigned directly.
+- Added touch preview buttons to file and folder results.
+
+### Improved
+
+- Improved Command Bar cold launch, editor focus, IME hand-off, and first-character capture, reducing duplicate keyboard-show requests and intermittent startup stalls.
+- Improved conventional-phone usability with clearer touch targets, app icons in pickers, compact action buttons, and touch-first alternatives to keyboard-only actions.
+- Improved search alias and command-trigger highlighting, including multi-character triggers and prefix/suffix matching.
+- Improved app, file, folder, web, and split-screen result presentation with clearer context and Commander-consistent action glyphs.
+- Improved Todoist natural-language parsing for short dates, dates placed after inline or suffix triggers, and detected-time highlighting.
+- Improved module isolation so disabled Home and Hub features do not leak into unrelated Commander surfaces.
+- Improved compatibility and testing on Nothing OS / CMF Phone 2 Pro while retaining keyboard-phone workflows.
+- Added a Baseline Profile and reduced avoidable launch-path work for faster repeated Commander Bar invocation.
+
+### Fixed
+
+- Fixed aliases entered at the beginning of a query deactivating after the first space.
+- Fixed file search unexpectedly switching to folder-only mode when ordinary query text happened to resemble a filter.
+- Fixed Backspace dismissing Commander Bar before the final visible character had been removed.
+- Fixed some multi-character triggers highlighting only their first character.
+- Fixed split-screen app detection and Recents automation intermittently stopping before the split action.
+- Fixed web and file action icons using inconsistent filled backgrounds.
+- Fixed experimental Commander Home entries remaining visible after the Home module was disabled.
+
+Commander Home remains in development source but is disabled and hidden from this public alpha build.
+
 ## 0.1.0-alpha.6
 
 ### Added

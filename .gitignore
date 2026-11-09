@@ -23,6 +23,8 @@ keystore.properties
 # Build artifacts and local captures
 *.apk
 *.aab
+*.idsig
+release/
 captures/
 docs/media/*.mp4
 

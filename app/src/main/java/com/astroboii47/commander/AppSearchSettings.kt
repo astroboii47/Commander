@@ -7,12 +7,14 @@ object AppSearchSettings {
     private const val PREFS = "app_search"
     private const val KEY_OPEN_SINGLE_RESULT = "open_single_result"
     private const val KEY_WEB_FALLBACK = "web_fallback"
+    private const val KEY_WEB_PREVIEWS = "web_previews"
     private const val KEY_ALIAS_SUGGESTIONS = "alias_suggestions"
     private const val KEY_APP_SHORTCUT_CATEGORY = "app_shortcut_category"
     private const val KEY_QUICK_CONTROLS_CATEGORY = "quick_controls_category"
 
     val openSingleResult = mutableStateOf(false)
     val webFallback = mutableStateOf(false)
+    val webPreviews = mutableStateOf(false)
     val aliasSuggestions = mutableStateOf(true)
     val appShortcutCategory = mutableStateOf(false)
     val quickControlsCategory = mutableStateOf(false)
@@ -22,6 +24,8 @@ object AppSearchSettings {
             .getBoolean(KEY_OPEN_SINGLE_RESULT, false)
         webFallback.value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_WEB_FALLBACK, false)
+        webPreviews.value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_WEB_PREVIEWS, false)
         aliasSuggestions.value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_ALIAS_SUGGESTIONS, true)
         appShortcutCategory.value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -42,6 +46,13 @@ object AppSearchSettings {
             .putBoolean(KEY_WEB_FALLBACK, enabled)
             .apply()
         webFallback.value = enabled
+    }
+
+    fun saveWebPreviews(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_WEB_PREVIEWS, enabled)
+            .apply()
+        webPreviews.value = enabled
     }
 
     fun saveAliasSuggestions(context: Context, enabled: Boolean) {

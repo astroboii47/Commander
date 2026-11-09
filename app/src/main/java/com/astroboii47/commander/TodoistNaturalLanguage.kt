@@ -2,8 +2,10 @@ package com.astroboii47.commander
 
 object TodoistNaturalLanguage {
     private const val WEEKDAY = "(?:mon(?:day)?|tue(?:s|sday)?|wed(?:s|nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)"
-    private val dueDatePattern = Regex(
-        "(?i)\\b(?:tod|today|tom|tomorrow|tonight|this (?:morning|afternoon|evening)|next (?:week|month|year)|every (?:day|weekday|week|month|year|$WEEKDAY)|(?:next|this) $WEEKDAY|$WEEKDAY|in \\d+ (?:days?|weeks?|months?|years?)|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?) \\d{1,2}(?:st|nd|rd|th)?)\\b",
+    private const val MONTH = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+    private val dayFirstDatePattern = Regex("(?i)\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+($MONTH)\\b")
+    val dueDatePattern = Regex(
+        "(?i)\\b(?:tod|today|tom|tomorrow|tonight|this (?:morning|afternoon|evening)|next (?:week|month|year)|every (?:day|weekday|week|month|year|$WEEKDAY)|(?:next|this) $WEEKDAY|$WEEKDAY|in \\d+ (?:days?|weeks?|months?|years?)|$MONTH \\d{1,2}(?:st|nd|rd|th)?|\\d{1,2}(?:st|nd|rd|th)? $MONTH)\\b",
     )
     private val dueTimePattern = Regex(
         "(?i)\\b(?:at )?(?:[01]?\\d|2[0-3])(?::[0-5]\\d)? ?(?:am|pm)\\b",
@@ -16,9 +18,14 @@ object TodoistNaturalLanguage {
         "(?i)(?<!\\d)(?:(?:[01]\\d|2[0-3])[0-5]\\d|[0-9][0-5]\\d)(?: ?(?:am|pm))?(?![\\p{L}\\d])",
     )
 
-    fun expandCompactTimes(text: String): String = compactTimePattern.replace(text) { match ->
+    fun expandCompactTimes(text: String): String = compactTimePattern.replace(normalizeDayFirstDates(text)) { match ->
         val splitAt = match.value.length - 2
         match.value.substring(0, splitAt) + ":" + match.value.substring(splitAt)
+    }
+
+    /** Todoist's Quick Add documentation uses month-first English dates; keep day-first typing natural in Commander. */
+    fun normalizeDayFirstDates(text: String): String = dayFirstDatePattern.replace(text) { match ->
+        "${match.groupValues[2]} ${match.groupValues[1]}"
     }
 
     fun detectedDuePreview(text: String): String? {
@@ -61,6 +68,10 @@ object TodoistNaturalLanguage {
         )
         val expanded = Regex("[A-Za-z]+").replace(value) { match ->
             expansions[match.value.lowercase()] ?: match.value.lowercase()
+        }
+        if (dayFirstDatePattern.matches(value)) {
+            val parts = expanded.split(' ', limit = 2)
+            return "${parts[0]} ${parts[1].replaceFirstChar { it.uppercase() }}"
         }
         return expanded.replaceFirstChar { it.uppercase() }
     }
