@@ -20,6 +20,13 @@ import android.content.res.Configuration
 import android.os.SystemClock
 import android.util.Log
 import android.view.ViewTreeObserver
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.webkit.WebView
+import android.app.ActivityOptions
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 
 class OverlayActivity : ComponentActivity() {
     val windowFocusedState = mutableStateOf(false)
@@ -28,6 +35,99 @@ class OverlayActivity : ComponentActivity() {
     private val askWaitingState = mutableStateOf(false)
     private val switcherRequestState = mutableIntStateOf(0)
     private var currentQuery = ""
+    private var commanderWidgetHost: AppWidgetHost? = null
+    private var widgetHostUsers = 0
+    private var preparedWebView: WebView? = null
+    private var externalLaunchPending = false
+    private var finishingAfterExternalLaunch = false
+
+    override fun finish() {
+        super.finish()
+        if (!finishingAfterExternalLaunch) {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(R.anim.commander_target_enter, R.anim.commander_overlay_exit)
+        }
+    }
+
+    /** Fade Commander before Android waits for the target app's first window. */
+    fun launchAfterCommanderExit(intent: Intent): Boolean {
+        if (externalLaunchPending) return true
+        if (intent.resolveActivity(packageManager) == null) return false
+        externalLaunchPending = true
+        WindowCompat.getInsetsController(window, window.decorView)
+            .hide(WindowInsetsCompat.Type.ime())
+        val travel = 10f * resources.displayMetrics.density
+        window.decorView.animate()
+            .alpha(0f)
+            .translationY(travel)
+            .setDuration(105L)
+            .withEndAction {
+                runCatching {
+                    startActivity(
+                        intent,
+                        ActivityOptions.makeCustomAnimation(
+                            this,
+                            R.anim.commander_target_enter,
+                            0,
+                        ).toBundle(),
+                    )
+                }.onSuccess {
+                    finishingAfterExternalLaunch = true
+                    finish()
+                }.onFailure {
+                    externalLaunchPending = false
+                    window.decorView.animate().cancel()
+                    window.decorView.alpha = 1f
+                    window.decorView.translationY = 0f
+                    android.widget.Toast.makeText(
+                        applicationContext,
+                        "Could not open the selected item",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            .start()
+        return true
+    }
+
+    private fun widgetHost(): AppWidgetHost = commanderWidgetHost
+        ?: AppWidgetHost(this, CommanderWidgets.HOST_ID).also { commanderWidgetHost = it }
+
+    fun acquireWidgetHost() {
+        widgetHostUsers++
+        if (widgetHostUsers == 1) runCatching { widgetHost().startListening() }
+    }
+
+    fun releaseWidgetHost() {
+        widgetHostUsers = (widgetHostUsers - 1).coerceAtLeast(0)
+        if (widgetHostUsers == 0) runCatching { commanderWidgetHost?.stopListening() }
+    }
+
+    fun createWidgetView(appWidgetId: Int): AppWidgetHostView? {
+        val info = AppWidgetManager.getInstance(this).getAppWidgetInfo(appWidgetId) ?: return null
+        return widgetHost().createView(this, appWidgetId, info).apply {
+            setAppWidget(appWidgetId, info)
+        }
+    }
+
+    fun prepareInbuiltWebView() {
+        if (preparedWebView != null || isFinishing || isDestroyed) return
+        preparedWebView = WebView(this).apply {
+            // Warm the renderer and the connection used by the in-panel search.
+            loadUrl("https://www.google.com/generate_204")
+        }
+    }
+
+    fun takePreparedWebView(): WebView = preparedWebView?.also { preparedWebView = null } ?: WebView(this)
+
+    fun releaseInbuiltWebView(view: WebView) {
+        view.stopLoading()
+        (view.parent as? android.view.ViewGroup)?.removeView(view)
+        if (!isFinishing && !isDestroyed && preparedWebView == null) {
+            view.loadUrl("about:blank")
+            preparedWebView = view
+        } else view.destroy()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val launchAt = SystemClock.uptimeMillis()
@@ -120,6 +220,7 @@ class OverlayActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         inputActive = true
+        if (widgetHostUsers > 0) runCatching { commanderWidgetHost?.startListening() }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -163,11 +264,16 @@ class OverlayActivity : ComponentActivity() {
         HomeTypingHandoff.finish()
         HomeTypingAccessibilityService.clearAppBehindBar()
         inputActive = false
+        runCatching { commanderWidgetHost?.stopListening() }
         super.onStop()
     }
 
     override fun onDestroy() {
         inputActive = false
+        widgetHostUsers = 0
+        runCatching { commanderWidgetHost?.stopListening() }
+        preparedWebView?.destroy()
+        preparedWebView = null
         super.onDestroy()
     }
 

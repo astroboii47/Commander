@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.0-alpha.7.1
+
+### Added
+
+- Added searchable home-screen widget controls to Commander Bar, including widget selection, custom names and aliases, compact previews, and direct activation for simple button-style widgets.
+- Added three configurable web-search destinations: browser-backed Quick popup, an inbuilt half-screen browser that keeps Commander and the keyboard open, and the full default browser.
+
+### Improved
+
+- Improved the inbuilt web-search panel with dedicated back, close, normal-browser, and private-browser actions, stable keyboard focus, cleaner layering, and a Commander-consistent header.
+- Prepares Android WebView only after an inbuilt web result appears, reducing the delay after opening it without adding work to ordinary Commander searches.
+- The inbuilt browser now expands into the space freed when the keyboard is dismissed and returns to its compact size when the keyboard reappears.
+- Web-panel expansion now respects display shape, using a lower height cap on square and compact physical-keyboard devices.
+- App, shortcut, browser, and overlay exits now share a brief Commander transition instead of abruptly leaving the Bar and keyboard onscreen during hand-off.
+- Commander now fades its own surface before requesting an external app, removing the frozen-Bar pause while Android waits for the target app's first window.
+- Reorganised Command Bar settings into clearer Hardware input, Web search, and Search results groups with more consistent spacing and descriptions.
+
+### Fixed
+
+- Fixed Commander result rows drawing over the inbuilt web browser.
+- Fixed the inbuilt browser loading its first URL twice, which delayed initial search results.
+- Fixed links inside the inbuilt browser being difficult to activate and browser hand-off reopening the original search instead of the currently displayed page.
+- Fixed editing or backspacing a query leaving the previous inbuilt web search open.
+- Removed an experimental Quick popup reveal transition that could interfere with live web results.
+
 ## 0.1.0-alpha.7
 
 ### Added

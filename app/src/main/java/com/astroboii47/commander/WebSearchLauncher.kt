@@ -53,7 +53,17 @@ internal object WebSearchLauncher {
     private fun startAndFinish(activity: Activity, intent: Intent, unavailable: String): String? {
         if (intent.resolveActivity(activity.packageManager) == null) return unavailable
         return runCatching {
-            activity.startActivity(intent, ActivityOptions.makeCustomAnimation(activity, 0, 0).toBundle())
+            if ((activity as? OverlayActivity)?.launchAfterCommanderExit(intent) == true) {
+                return@runCatching null
+            }
+            activity.startActivity(
+                intent,
+                ActivityOptions.makeCustomAnimation(
+                    activity,
+                    R.anim.commander_target_enter,
+                    R.anim.commander_overlay_exit,
+                ).toBundle(),
+            )
             finishOverlay(activity)
             null
         }.getOrElse { unavailable }
@@ -62,6 +72,6 @@ internal object WebSearchLauncher {
     private fun finishOverlay(activity: Activity) {
         activity.finish()
         @Suppress("DEPRECATION")
-        activity.overridePendingTransition(0, 0)
+        activity.overridePendingTransition(R.anim.commander_target_enter, R.anim.commander_overlay_exit)
     }
 }

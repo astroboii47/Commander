@@ -105,7 +105,15 @@ class CommandEngine(private val activity: Activity) {
                 add(AppResult("App Shortcuts", INTERNAL_APP_SHORTCUTS, null))
             }
         }
-        val matches = (destinations + AppCatalog.search(activity.applicationContext, query, limit).map {
+        val widgetMatches = CommanderWidgets.searchable(activity.applicationContext, query).map { widget ->
+            AppResult(
+                label = widget.name,
+                packageName = "${INTERNAL_WIDGET}${widget.appWidgetId}",
+                icon = null,
+                widgetId = widget.appWidgetId,
+            )
+        }
+        val matches = (widgetMatches + destinations + AppCatalog.search(activity.applicationContext, query, limit).map {
             AppResult(label = it.label, packageName = it.packageName, icon = null)
         }).distinctBy { it.packageName }.take(limit)
         return if (matches.isEmpty() && needle.isNotBlank() && includeWebFallback && AppSearchSettings.webFallback.value) {
@@ -139,7 +147,12 @@ class CommandEngine(private val activity: Activity) {
 
     fun loadVisibleAppIcons(apps: List<AppResult>): List<AppResult> {
         return apps.map { app ->
-            val icon = when (app.packageName) {
+            val icon = if (app.widgetId != null) {
+                app.widgetId.let { widgetId ->
+                    val providerPackage = CommanderWidgets.all(activity).firstOrNull { it.appWidgetId == widgetId }?.providerPackage
+                    providerPackage?.let { runCatching { packageManager.getApplicationIcon(it) }.getOrNull() }
+                }
+            } else when (app.packageName) {
                 INTERNAL_HOME -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_home)
             INTERNAL_SETTINGS -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_bar)
                 INTERNAL_HUB -> ContextCompat.getDrawable(activity, R.drawable.ic_commander_hub)
@@ -900,7 +913,10 @@ class CommandEngine(private val activity: Activity) {
 
     private fun searchWeb(text: String): String? {
         if (text.isBlank()) return "Type a search after /"
-        return WebSearchLauncher.openQuick(activity, text)
+        return when (AppSearchSettings.webSearchMode.value) {
+            WebSearchMode.QuickPopup, WebSearchMode.InbuiltPopup -> WebSearchLauncher.openQuick(activity, text)
+            WebSearchMode.DefaultBrowser -> WebSearchLauncher.openNormally(activity, text)
+        }
     }
 
     private fun askChatGpt(text: String): String? {
@@ -929,6 +945,9 @@ class CommandEngine(private val activity: Activity) {
     }
 
     private fun launchApp(app: AppResult): String? {
+        app.widgetId?.let { widgetId ->
+            return if (CommanderWidgetActions.perform(widgetId)) null else "Widget control is not ready"
+        }
         val intent = when (app.packageName) {
             INTERNAL_HUB -> internalDestination(HubActivity::class.java)
             INTERNAL_HOME -> internalDestination(MainActivity::class.java)
@@ -970,6 +989,7 @@ class CommandEngine(private val activity: Activity) {
         const val INTERNAL_TASKS = "internal:todoist-tasks"
         const val INTERNAL_QUICK_CONTROLS = "internal:quick-controls"
         const val INTERNAL_APP_SHORTCUTS = "internal:app-shortcuts"
+        const val INTERNAL_WIDGET = "internal:widget:"
     }
 
     private fun shareToPackage(text: String, packageName: String, label: String): String? {
@@ -1058,11 +1078,16 @@ class CommandEngine(private val activity: Activity) {
     }
 
     private fun startActivityAndFinish(intent: Intent) {
-        val launchOptions = ActivityOptions.makeCustomAnimation(activity, 0, 0).toBundle()
+        if ((activity as? OverlayActivity)?.launchAfterCommanderExit(intent) == true) return
+        val launchOptions = ActivityOptions.makeCustomAnimation(
+            activity,
+            R.anim.commander_target_enter,
+            R.anim.commander_overlay_exit,
+        ).toBundle()
         activity.startActivity(intent, launchOptions)
         activity.finish()
         @Suppress("DEPRECATION")
-        activity.overridePendingTransition(0, 0)
+        activity.overridePendingTransition(R.anim.commander_target_enter, R.anim.commander_overlay_exit)
     }
 }
 

@@ -2,6 +2,8 @@ package com.astroboii47.commander
 
 import android.content.res.Configuration
 import android.graphics.drawable.Drawable
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -29,6 +31,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -42,6 +45,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -164,8 +169,12 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
+import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -371,6 +380,8 @@ fun CommandOverlayApp(
     val fileListState = rememberLazyListState()
     var executing by remember { mutableStateOf(false) }
     var touchExecutingAppKey by remember { mutableStateOf<String?>(null) }
+    var inbuiltWebUrl by remember { mutableStateOf<String?>(null) }
+    var inbuiltWebSourceQuery by remember { mutableStateOf<String?>(null) }
     var controlFeedback by remember { mutableStateOf<Pair<ControlKind, String>?>(null) }
     var askPreview by remember { mutableStateOf(initialAskPreview) }
     var askWaiting by remember { mutableStateOf(initialAskWaiting) }
@@ -473,6 +484,14 @@ fun CommandOverlayApp(
                 if (combined.isEmpty()) engine.webFallbackResult(parsed.text)?.let(::listOf).orEmpty()
                 else combined
             } else emptyList()
+        }
+    }
+    val hasInbuiltWebResult = rawBaseApps.any { it.packageName.startsWith(CommandEngine.INTERNAL_WEB) } &&
+        AppSearchSettings.webSearchMode.value == WebSearchMode.InbuiltPopup
+    LaunchedEffect(hasInbuiltWebResult) {
+        if (hasInbuiltWebResult) {
+            delay(90)
+            (engine.context as? OverlayActivity)?.prepareInbuiltWebView()
         }
     }
     var webSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -890,6 +909,20 @@ fun CommandOverlayApp(
 
     fun launchApp(app: AppResult, fromTouch: Boolean = false) {
         if (fromTouch) touchExecutingAppKey = app.packageName
+        if (
+            AppSearchSettings.webSearchMode.value == WebSearchMode.InbuiltPopup &&
+            app.packageName.startsWith(CommandEngine.INTERNAL_WEB) &&
+            !app.packageName.startsWith(CommandEngine.INTERNAL_WEB_PRIVATE) &&
+            !app.packageName.startsWith(CommandEngine.INTERNAL_WEB_FULL)
+        ) {
+            val webQuery = android.net.Uri.decode(app.packageName.removePrefix(CommandEngine.INTERNAL_WEB))
+            inbuiltWebUrl = WebSearchLauncher.urlFor(webQuery).toString()
+            inbuiltWebSourceQuery = query
+            touchExecutingAppKey = null
+            SoundFeedback.play(engine.context, CommandSound.Confirm)
+            focusRequester.requestFocus()
+            return
+        }
         if (splitPairMode) {
             if (splitTopPackage == null) {
                 splitTopPackage = app.packageName
@@ -992,6 +1025,17 @@ fun CommandOverlayApp(
             return
         }
         if (executing) return
+        if (parsed.kind == CommandKind.Web && AppSearchSettings.webSearchMode.value == WebSearchMode.InbuiltPopup) {
+            if (parsed.text.isBlank()) {
+                notice = "Type a search after /"
+                return
+            }
+            inbuiltWebUrl = WebSearchLauncher.urlFor(parsed.text).toString()
+            inbuiltWebSourceQuery = query
+            SoundFeedback.play(engine.context, CommandSound.Confirm)
+            focusRequester.requestFocus()
+            return
+        }
         executing = true
         scope.launch {
             delay(135)
@@ -1622,7 +1666,20 @@ fun CommandOverlayApp(
         }
         return true
     }
-    BackHandler(enabled = fileActionTarget != null || splitPairMode) { emptyBackspace() }
+    BackHandler(enabled = inbuiltWebUrl != null || fileActionTarget != null || splitPairMode) {
+        if (inbuiltWebUrl != null) {
+            inbuiltWebUrl = null
+            inbuiltWebSourceQuery = null
+            focusRequester.requestFocus()
+        } else emptyBackspace()
+    }
+    LaunchedEffect(query, inbuiltWebUrl, inbuiltWebSourceQuery) {
+        if (inbuiltWebUrl != null && inbuiltWebSourceQuery != null && query != inbuiltWebSourceQuery) {
+            inbuiltWebUrl = null
+            inbuiltWebSourceQuery = null
+            focusRequester.requestFocus()
+        }
+    }
     DisposableEffect(
         switcherMode, switcherTasks.size, todoistMode, visibleTodoistTasks.size,
         fileActionTarget, fileActions.size, fileActionDetail,
@@ -1818,6 +1875,30 @@ fun CommandOverlayApp(
         contentAlignment = Alignment.BottomCenter,
     ) {
         AnimatedVisibility(
+            visible = inbuiltWebUrl != null,
+            modifier = Modifier.align(Alignment.TopCenter).zIndex(10f),
+            enter = fadeIn(tween(130)) + expandVertically(tween(190), expandFrom = Alignment.Top),
+            exit = fadeOut(tween(90)),
+        ) {
+            inbuiltWebUrl?.let { url ->
+                InbuiltWebSearchPanel(
+                    url = url,
+                    palette = palette,
+                    onClose = {
+                        inbuiltWebUrl = null
+                        inbuiltWebSourceQuery = null
+                        focusRequester.requestFocus()
+                    },
+                    onOpenBrowser = { currentUrl ->
+                        WebSearchLauncher.openNormally(engine.context as android.app.Activity, currentUrl)
+                    },
+                    onOpenPrivate = { currentUrl ->
+                        WebSearchLauncher.openPrivately(engine.context as android.app.Activity, currentUrl)
+                    },
+                )
+            }
+        }
+        AnimatedVisibility(
             visibleState = entranceState,
             enter = fadeIn(tween(150)) + slideInVertically(tween(220)) { it / 2 },
             exit = fadeOut(tween(100)) + slideOutVertically(tween(150)) { it / 3 },
@@ -1885,6 +1966,7 @@ fun CommandOverlayApp(
                 OverlayCompletion(notice!!, palette, commandSurface, focusRequester)
             } else {
             when {
+                inbuiltWebUrl != null -> Unit
                 notice != null -> OverlayNotice(notice!!, palette)
                 todoistMode -> OverlayTodoistTasks(
                     tasks = visibleTodoistTasks,
@@ -2715,7 +2797,7 @@ private fun AskConversationPreview(
             Text(
                 text = response,
                 color = palette.text,
-                fontFamily = OverlaySans,
+                fontFamily = FontFamily.SansSerif,
                 fontSize = 14.sp,
                 lineHeight = 19.sp,
             )
@@ -2887,6 +2969,145 @@ private fun OverlayDiscoveryResults(
 }
 
 @Composable
+private fun InbuiltWebSearchPanel(
+    url: String,
+    palette: OverlayPalette,
+    onClose: () -> Unit,
+    onOpenBrowser: (String) -> Unit,
+    onOpenPrivate: (String) -> Unit,
+) {
+    val activity = LocalActivity.current as? OverlayActivity
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val displayRatio = configuration.screenHeightDp.toFloat() /
+        configuration.screenWidthDp.coerceAtLeast(1).toFloat()
+    val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
+    val expandedHeight = when {
+        displayRatio <= 1.15f -> .62f
+        displayRatio <= 1.45f -> .70f
+        else -> .82f
+    }
+    val panelHeightFraction by animateFloatAsState(
+        targetValue = if (keyboardVisible) .52f else expandedHeight,
+        animationSpec = tween(220),
+        label = "web-panel-height",
+    )
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    var currentUrl by remember(url) { mutableStateOf(url) }
+    var canGoBack by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        onDispose {
+            webView?.let { view ->
+                if (activity != null) activity.releaseInbuiltWebView(view)
+                else {
+                    view.stopLoading()
+                    view.destroy()
+                }
+            }
+            webView = null
+        }
+    }
+    val panelShape = RoundedCornerShape(18.dp)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .widthIn(max = 720.dp)
+            .fillMaxHeight(panelHeightFraction)
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .clip(panelShape)
+            .background(palette.panel.copy(alpha = .96f), panelShape)
+            .border(1.dp, OverlayAccent.copy(alpha = .55f), panelShape)
+            .clickable { },
+    ) {
+        Row(
+            Modifier.fillMaxWidth().height(46.dp).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "‹",
+                color = if (canGoBack) OverlayAccent else palette.secondary,
+                fontSize = 28.sp,
+                modifier = Modifier.clickable {
+                    if (canGoBack) webView?.goBack() else onClose()
+                }.padding(end = 12.dp),
+            )
+            Icon(Icons.Outlined.Public, null, tint = OverlayAccent, modifier = Modifier.size(19.dp))
+            Text(
+                "WEB SEARCH",
+                color = palette.text,
+                fontFamily = OverlaySans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                letterSpacing = 1.1.sp,
+                modifier = Modifier.padding(start = 9.dp).weight(1f),
+            )
+            Icon(
+                Icons.Outlined.VisibilityOff,
+                "Open current page privately",
+                tint = palette.secondary,
+                modifier = Modifier.size(30.dp).clickable { onOpenPrivate(currentUrl) }.padding(5.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                Icons.Outlined.OpenInNew,
+                "Open current page in browser",
+                tint = palette.secondary,
+                modifier = Modifier.size(30.dp).clickable { onOpenBrowser(currentUrl) }.padding(5.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "×",
+                color = palette.text,
+                fontSize = 25.sp,
+                modifier = Modifier.clickable(onClick = onClose).padding(horizontal = 4.dp),
+            )
+        }
+        Box(
+            Modifier.fillMaxSize().padding(start = 6.dp, end = 6.dp, bottom = 6.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(Color.White),
+        ) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    (activity?.takePreparedWebView() ?: WebView(context)).apply {
+                        webView = this
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView, pageUrl: String?, favicon: android.graphics.Bitmap?) {
+                                pageUrl?.let { currentUrl = it }
+                                canGoBack = view.canGoBack()
+                            }
+
+                            override fun onPageFinished(view: WebView, pageUrl: String?) {
+                                pageUrl?.let { currentUrl = it }
+                                canGoBack = view.canGoBack()
+                            }
+                        }
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.allowFileAccess = false
+                        settings.allowContentAccess = false
+                        settings.builtInZoomControls = false
+                        settings.displayZoomControls = false
+                        isFocusable = true
+                        isFocusableInTouchMode = true
+                        tag = url
+                        loadUrl(url)
+                    }
+                },
+                update = { view ->
+                    if (view.tag != url) {
+                        view.tag = url
+                        view.loadUrl(url)
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
 private fun OverlayAppResults(
     apps: List<AppResult>,
     selectedIndex: Int,
@@ -3012,7 +3233,10 @@ private fun OverlayAppResultRow(
                     shape,
                 )
                 .combinedClickable(
-                    onClick = { onClick(app) },
+                    onClick = {
+                        val widgetId = app.widgetId
+                        if (widgetId == null || !CommanderWidgetActions.perform(widgetId)) onClick(app)
+                    },
                     onLongClick = { if (!app.packageName.startsWith("internal:")) onLongClick(app) },
                 ).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -3106,7 +3330,12 @@ private fun OverlayAppResultRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (isWebSearch) {
+            if (app.widgetId != null) {
+                Spacer(Modifier.width(8.dp))
+                CompactCommanderWidget(
+                    appWidgetId = app.widgetId,
+                )
+            } else if (isWebSearch) {
                 val encodedQuery = app.packageName.removePrefix(CommandEngine.INTERNAL_WEB)
                 WebResultAction(
                     icon = Icons.Outlined.VisibilityOff,
@@ -3130,6 +3359,31 @@ private fun OverlayAppResultRow(
             } else if (selected) Text("↵", color = if (visualMode == AppGlowMode.Full) Color.White else selectionColor, fontFamily = OverlayMono, fontWeight = FontWeight.Bold, fontSize = 24.sp)
         }
     }
+}
+
+@Composable
+private fun CompactCommanderWidget(
+    appWidgetId: Int,
+) {
+    val activity = LocalActivity.current as? OverlayActivity ?: return
+    var hostView by remember(appWidgetId) { mutableStateOf<android.appwidget.AppWidgetHostView?>(null) }
+    DisposableEffect(activity, appWidgetId) {
+        activity.acquireWidgetHost()
+        onDispose {
+            hostView?.let { CommanderWidgetActions.unregister(appWidgetId, it) }
+            activity.releaseWidgetHost()
+        }
+    }
+    AndroidView(
+        factory = {
+            activity.createWidgetView(appWidgetId)?.also { view ->
+                view.setPadding(0, 0, 0, 0)
+                CommanderWidgetActions.register(appWidgetId, view)
+                hostView = view
+            } ?: android.widget.FrameLayout(activity)
+        },
+        modifier = Modifier.size(width = 58.dp, height = 48.dp).clip(RoundedCornerShape(11.dp)),
+    )
 }
 
 @Composable

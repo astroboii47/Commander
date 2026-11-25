@@ -23,6 +23,7 @@ data class AppResult(
     val adaptiveColor: Int? = null,
     val control: ControlResult? = null,
     val shortcut: AppShortcutResult? = null,
+    val widgetId: Int? = null,
 )
 
 data class ContactResult(

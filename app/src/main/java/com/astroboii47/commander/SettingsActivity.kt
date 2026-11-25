@@ -14,6 +14,9 @@ import android.os.Environment
 import android.Manifest
 import android.content.pm.PackageManager
 import android.widget.Toast
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
 import androidx.core.graphics.drawable.toBitmap
 import java.io.ByteArrayOutputStream
 import androidx.core.app.ActivityCompat
@@ -66,6 +69,7 @@ import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Cancel
+import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -185,6 +189,37 @@ class SettingsActivity : ComponentActivity() {
     private var taskerPickerCallback: ((Intent?) -> Unit)? = null
     private var iconPickerPackage: String? = null
     private var iconPickerCallback: (() -> Unit)? = null
+    private var pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+    private val widgetConfigure = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val appWidgetId = result.data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingWidgetId)
+            ?: pendingWidgetId
+        if (result.resultCode == Activity.RESULT_OK && appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            CommanderWidgets.add(this, appWidgetId)
+            Toast.makeText(this, "Widget added to Commander Bar", Toast.LENGTH_SHORT).show()
+        } else if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            AppWidgetHost(this, CommanderWidgets.HOST_ID).deleteAppWidgetId(appWidgetId)
+        }
+        pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+    }
+    private val widgetPicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val appWidgetId = result.data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingWidgetId)
+            ?: pendingWidgetId
+        if (result.resultCode != Activity.RESULT_OK || appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+            if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                AppWidgetHost(this, CommanderWidgets.HOST_ID).deleteAppWidgetId(appWidgetId)
+            }
+            pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+            return@registerForActivityResult
+        }
+        pendingWidgetId = appWidgetId
+        val configure = CommanderWidgets.configureIntent(this, appWidgetId)
+        if (configure != null) widgetConfigure.launch(configure)
+        else {
+            CommanderWidgets.add(this, appWidgetId)
+            pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+            Toast.makeText(this, "Widget added to Commander Bar", Toast.LENGTH_SHORT).show()
+        }
+    }
     private val iconPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         val packageName = iconPickerPackage
         if (uri != null && packageName != null && AppIconOverrides.save(this, packageName, uri)) iconPickerCallback?.invoke()
@@ -276,6 +311,19 @@ class SettingsActivity : ComponentActivity() {
         homeWallpaperPicker.launch(arrayOf("image/*"))
     }
 
+    fun pickCommanderWidget() {
+        val appWidgetId = AppWidgetHost(this, CommanderWidgets.HOST_ID).allocateAppWidgetId()
+        pendingWidgetId = appWidgetId
+        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_PICK).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+        }
+        runCatching { widgetPicker.launch(intent) }.onFailure {
+            AppWidgetHost(this, CommanderWidgets.HOST_ID).deleteAppWidgetId(appWidgetId)
+            pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+            Toast.makeText(this, "Android's widget picker is unavailable", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun requestAssistantRole() {
         val roles = getSystemService(RoleManager::class.java)
         val intent = if (roles?.isRoleAvailable(RoleManager.ROLE_ASSISTANT) == true) {
@@ -319,6 +367,20 @@ private fun SettingsSectionHeader(title: String, icon: ImageVector, accent: Colo
         Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
         Text(title, color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
+}
+
+@Composable
+private fun SettingsSubsectionHeader(title: String, subtitle: String, accent: Color) {
+    Text(
+        title.uppercase(),
+        color = accent,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.2.sp,
+    )
+    Spacer(Modifier.height(3.dp))
+    Text(subtitle, color = Color(0xFF99958E), fontSize = 12.sp)
+    Spacer(Modifier.height(11.dp))
 }
 
 private data class SettingsAnchors(
@@ -948,9 +1010,11 @@ private fun TodoistConnectionSettings(
 private fun WebSearchSettingsRows(
     webFallback: Boolean,
     webPreviews: Boolean,
+    webSearchMode: WebSearchMode,
     accent: Color,
     onWebFallbackChanged: (Boolean) -> Unit,
     onWebPreviewsChanged: (Boolean) -> Unit,
+    onWebSearchModeChanged: (WebSearchMode) -> Unit,
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Column(Modifier.weight(1f)) {
@@ -975,6 +1039,28 @@ private fun WebSearchSettingsRows(
             onCheckedChange = onWebPreviewsChanged,
             colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent),
         )
+    }
+    Spacer(Modifier.height(10.dp))
+    Text("Web search opens in", color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(7.dp))
+    WebSearchMode.entries.forEach { mode ->
+        val selected = mode == webSearchMode
+        Row(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (selected) accent.copy(alpha = .18f) else Color(0xFF111111))
+                .border(1.dp, if (selected) accent else Color(0xFF292929), RoundedCornerShape(12.dp))
+                .clickable { onWebSearchModeChanged(mode) }
+                .padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(mode.title, color = if (selected) accent else Color(0xFFF4F1E9), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(mode.subtitle, color = Color(0xFF99958E), fontSize = 11.sp)
+            }
+            if (selected) Text("●", color = accent, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(7.dp))
     }
 }
 
@@ -1021,6 +1107,7 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
     var openSingleAppResult by remember { mutableStateOf(AppSearchSettings.openSingleResult.value) }
     var webFallback by remember { mutableStateOf(AppSearchSettings.webFallback.value) }
     var webPreviews by remember { mutableStateOf(AppSearchSettings.webPreviews.value) }
+    var webSearchMode by remember { mutableStateOf(AppSearchSettings.webSearchMode.value) }
     var aliasSuggestions by remember { mutableStateOf(AppSearchSettings.aliasSuggestions.value) }
     var appShortcutCategory by remember { mutableStateOf(AppSearchSettings.appShortcutCategory.value) }
     var quickControlsCategory by remember { mutableStateOf(AppSearchSettings.quickControlsCategory.value) }
@@ -1298,13 +1385,11 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
         Spacer(Modifier.height(24.dp))
         ImportantSourcesSettings(activity, accent)
         Spacer(Modifier.height(24.dp))
-        Text("Hardware shortcuts", color = Color(0xFFF4F1E9), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text(
-            "Launch Commander directly from physical keys without Key Mapper. Disable any matching Key Mapper action after assigning it here.",
-            color = Color(0xFF99958E),
-            fontSize = 12.sp,
+        SettingsSubsectionHeader(
+            "Hardware input",
+            "Launch Commander from physical keys without Key Mapper; disable any duplicate mapper action.",
+            accent,
         )
-        Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text("Enable hardware shortcuts", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -1486,24 +1571,36 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             )
         }
         Text("When enabled, also turn on ‘Commander home typing’ in Accessibility.", color = Color(0xFF99958E), fontSize = 11.sp)
-        Spacer(Modifier.height(18.dp))
-        WebSearchSettingsRows(
-            webFallback = webFallback,
-            webPreviews = webPreviews,
-            accent = accent,
-            onWebFallbackChanged = {
-                webFallback = it
-                AppSearchSettings.saveWebFallback(activity, it)
-            },
-            onWebPreviewsChanged = {
-                webPreviews = it
-                AppSearchSettings.saveWebPreviews(activity, it)
-            },
-        )
-        Spacer(Modifier.height(14.dp))
-        Text("App search categories", color = Color(0xFFF4F1E9), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-        Text("Optionally mix their matching actions into normal app results", color = Color(0xFF99958E), fontSize = 12.sp)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(24.dp))
+        SettingsSubsectionHeader("Web search", "Choose when web results appear and where searches open.", accent)
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF101010))
+                .border(1.dp, Color(0xFF292929), RoundedCornerShape(16.dp)).padding(14.dp),
+        ) {
+            WebSearchSettingsRows(
+                webFallback = webFallback,
+                webPreviews = webPreviews,
+                webSearchMode = webSearchMode,
+                accent = accent,
+                onWebFallbackChanged = {
+                    webFallback = it
+                    AppSearchSettings.saveWebFallback(activity, it)
+                },
+                onWebPreviewsChanged = {
+                    webPreviews = it
+                    AppSearchSettings.saveWebPreviews(activity, it)
+                },
+                onWebSearchModeChanged = {
+                    webSearchMode = it
+                    AppSearchSettings.saveWebSearchMode(activity, it)
+                },
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+        SettingsSubsectionHeader("Search results", "Control which result types appear and how app matches behave.", accent)
+        Text("App search categories", color = Color(0xFFF4F1E9), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("Mix matching actions into normal app results", color = Color(0xFF99958E), fontSize = 12.sp)
+        Spacer(Modifier.height(7.dp))
         listOf(
             Triple("App Shortcuts", appShortcutCategory) { value: Boolean ->
                 appShortcutCategory = value
@@ -1962,6 +2059,8 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             }
         }
         Spacer(Modifier.height(28.dp))
+        CommanderWidgetSettingsPanel(activity, accent)
+        Spacer(Modifier.height(28.dp))
         SettingsSectionHeader("app search terms", Icons.Outlined.Apps, accent, Modifier.bringIntoViewRequester(appsAnchor))
         Spacer(Modifier.height(7.dp))
         Text("Find an app, then add optional comma-separated terms such as ps, store.", color = Color(0xFF99958E), fontSize = 12.sp)
@@ -2045,6 +2144,70 @@ private fun TodoistSettingsScreen(activity: SettingsActivity) {
             appTermValues.forEach { (packageName, terms) -> AppSearchTerms.save(activity, packageName, terms) }
             saved = colorValid
         }) { Text(if (saved) "Saved" else "Save") }
+    }
+}
+
+@Composable
+private fun CommanderWidgetSettingsPanel(activity: SettingsActivity, accent: Color) {
+    @Suppress("UNUSED_VARIABLE") val revision = CommanderWidgets.revision.intValue
+    val widgets = CommanderWidgets.all(activity)
+    SettingsSectionHeader("widget results", Icons.Outlined.Widgets, accent)
+    Spacer(Modifier.height(7.dp))
+    Text(
+        "Add a compact Android widget and find it like a normal Commander result. Widgets only listen while their result is visible.",
+        color = Color(0xFF99958E),
+        fontSize = 12.sp,
+    )
+    Spacer(Modifier.height(11.dp))
+    Button(
+        colors = ButtonDefaults.buttonColors(containerColor = accent),
+        onClick = activity::pickCommanderWidget,
+    ) { Text("Add widget") }
+    if (widgets.isEmpty()) {
+        Text("No widget results configured", color = Color(0xFF77736D), fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
+    }
+    widgets.forEach { widget ->
+        var name by remember(widget.appWidgetId, widget.name) { mutableStateOf(widget.name) }
+        var aliases by remember(widget.appWidgetId, widget.aliases) { mutableStateOf(widget.aliases) }
+        Column(
+            Modifier.fillMaxWidth().padding(top = 12.dp)
+                .background(Color(0xFF111111), RoundedCornerShape(13.dp)).padding(12.dp),
+        ) {
+            Text(widget.providerPackage, color = Color(0xFF77736D), fontSize = 9.sp, maxLines = 1)
+            Spacer(Modifier.height(7.dp))
+            BasicTextField(
+                value = name,
+                onValueChange = { value ->
+                    name = value.take(40)
+                    CommanderWidgets.update(activity, widget.copy(name = name, aliases = aliases))
+                },
+                singleLine = true,
+                textStyle = TextStyle(color = Color(0xFFF4F1E9), fontSize = 15.sp, fontWeight = FontWeight.Bold),
+                modifier = Modifier.fillMaxWidth().background(Color.Black, RoundedCornerShape(9.dp)).padding(10.dp),
+            )
+            Spacer(Modifier.height(7.dp))
+            BasicTextField(
+                value = aliases,
+                onValueChange = { value ->
+                    aliases = value.take(80)
+                    CommanderWidgets.update(activity, widget.copy(name = name, aliases = aliases))
+                },
+                singleLine = true,
+                textStyle = TextStyle(color = Color(0xFFF4F1E9), fontSize = 13.sp),
+                decorationBox = { inner ->
+                    if (aliases.isBlank()) Text("search aliases", color = Color(0xFF77736D), fontSize = 13.sp)
+                    inner()
+                },
+                modifier = Modifier.fillMaxWidth().background(Color.Black, RoundedCornerShape(9.dp)).padding(10.dp),
+            )
+            Text(
+                "remove",
+                color = Color(0xFFFF7666),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.End).clickable { CommanderWidgets.remove(activity, widget.appWidgetId) }.padding(top = 9.dp),
+            )
+        }
     }
 }
 
